@@ -709,6 +709,8 @@ struct parsed_route {
     const struct nbrec_logical_router *nbr;
     bool stale;
     struct sset ecmp_selection_fields;
+    bool is_ipv4_prefix;
+    bool is_ipv4_nexthop;
 };
 
 void ovnnb_db_run(struct northd_input *input_data,
