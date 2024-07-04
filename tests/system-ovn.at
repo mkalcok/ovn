@@ -13027,3 +13027,103 @@ OVS_TRAFFIC_VSWITCHD_STOP(["/failed to query port patch-.*/d
 /connection dropped.*/d"])
 AT_CLEANUP
 ])
+
+OVN_FOR_EACH_NORTHD([
+AT_SETUP([Routing protocol redirect])
+AT_SKIP_IF([test $HAVE_NC = no])
+
+ovn_start
+OVS_TRAFFIC_VSWITCHD_START()
+
+ADD_BR([br-int])
+ADD_BR([br-ext])
+
+check ovs-ofctl add-flow br-ext action=normal
+# Set external-ids in br-int needed for ovn-controller
+check ovs-vsctl \
+        -- set Open_vSwitch . external-ids:system-id=hv1 \
+        -- set Open_vSwitch . external-ids:ovn-remote=unix:$ovs_base/ovn-sb/ovn-sb.sock \
+        -- set Open_vSwitch . external-ids:ovn-encap-type=geneve \
+        -- set Open_vSwitch . external-ids:ovn-encap-ip=169.0.0.1 \
+        -- set bridge br-int fail-mode=secure other-config:disable-in-band=true
+
+# Start ovn-controller
+start_daemon ovn-controller
+
+check ovn-nbctl lr-add R1 \
+    -- set Logical_Router R1 options:chassis=hv1
+
+check ovn-nbctl ls-add public
+
+check ovn-nbctl lrp-add R1 rp-public 00:00:02:01:02:03 172.16.1.1/24
+
+check ovn-nbctl lsp-add public public-rp -- set Logical_Switch_Port public-rp \
+    type=router options:router-port=rp-public \
+    -- lsp-set-addresses public-rp router
+
+check ovn-nbctl lsp-add public bgp-daemon \
+    -- lsp-set-addresses bgp-daemon unknown
+
+AT_CHECK([ovs-vsctl set Open_vSwitch . external-ids:ovn-bridge-mappings=phynet:br-ext])
+check ovn-nbctl lsp-add public public1 \
+        -- lsp-set-addresses public1 unknown \
+        -- lsp-set-type public1 localnet \
+        -- lsp-set-options public1 network_name=phynet
+
+check ovn-nbctl --wait=hv sync
+
+# Set option that redirects BGP traffic to a LSP "bgp-daemon"
+check ovn-nbctl --wait=sb set logical_router_port rp-public options:routing-protocol-redirect=bgp-daemon
+check ovn-nbctl --wait=sb set logical_router_port rp-public options:routing-protocols=BGP
+
+# Create "bgp-daemon" interface in a namespace with IP and MAC matching LRP "rp-public"
+ADD_NAMESPACES(bgp-daemon)
+ADD_VETH(bgp-daemon, bgp-daemon, br-int, "172.16.1.1/24", "00:00:02:01:02:03")
+
+ADD_NAMESPACES(ext-foo)
+ADD_VETH(ext-foo, ext-foo, br-ext, "172.16.1.100/24", "00:10:10:01:02:13", \
+         "172.16.1.1")
+
+# Flip the interface down/up to get proper IPv6 LLA
+NS_EXEC([bgp-daemon], [ip link set down bgp-daemon])
+NS_EXEC([bgp-daemon], [ip link set up bgp-daemon])
+NS_EXEC([ext-foo], [ip link set down ext-foo])
+NS_EXEC([ext-foo], [ip link set up ext-foo])
+
+# Wait until IPv6 LLA loses the "tentative" flag otherwise it can't be bound to.
+OVS_WAIT_UNTIL([NS_EXEC([bgp-daemon], [ip a show dev bgp-daemon | grep "fe80::" | grep -v tentative])])
+OVS_WAIT_UNTIL([NS_EXEC([ext-foo], [ip a show dev ext-foo | grep "fe80::" | grep -v tentative])])
+
+# Verify that BGP control plane traffic is delivered to the "bgp-daemon"
+# interface on both IPv4 and IPv6 LLA addresses
+NETNS_DAEMONIZE([bgp-daemon], [nc -l -k 172.16.1.1 179], [bgp_v4.pid])
+NS_CHECK_EXEC([ext-foo], [echo "TCP test" | nc --send-only 172.16.1.1 179])
+
+NETNS_DAEMONIZE([bgp-daemon], [nc -l -6 -k fe80::200:2ff:fe01:203%bgp-daemon 179], [bgp_v6.pid])
+NS_CHECK_EXEC([ext-foo], [echo "TCP test" | nc --send-only -6 fe80::200:2ff:fe01:203%ext-foo 179])
+
+# Verify connection in other direction. i.e when daemon running on "bgp-daemon" port
+# makes a client connection to its peer
+NETNS_DAEMONIZE([ext-foo], [nc -l -k 172.16.1.100 179], [reply_bgp_v4.pid])
+NS_CHECK_EXEC([bgp-daemon], [echo "TCP test" | nc --send-only 172.16.1.100 179])
+
+NETNS_DAEMONIZE([ext-foo], [nc -l -6 -k fe80::210:10ff:fe01:213%ext-foo 179], [reply_bgp_v6.pid])
+NS_CHECK_EXEC([bgp-daemon], [echo "TCP test" | nc --send-only -6 fe80::210:10ff:fe01:213%bgp-daemon 179])
+
+
+OVS_APP_EXIT_AND_WAIT([ovn-controller])
+
+as ovn-sb
+OVS_APP_EXIT_AND_WAIT([ovsdb-server])
+
+as ovn-nb
+OVS_APP_EXIT_AND_WAIT([ovsdb-server])
+
+as northd
+OVS_APP_EXIT_AND_WAIT([ovn-northd])
+
+as
+OVS_TRAFFIC_VSWITCHD_STOP(["/.*error receiving.*/d
+/.*terminating with signal 15.*/d"])
+AT_CLEANUP
+])
