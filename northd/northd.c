@@ -1189,7 +1189,8 @@ destroy_routable_addresses(struct ovn_port_routable_addresses *ra)
 
 static char **get_nat_addresses(const struct ovn_port *op, size_t *n,
                                 bool routable_only, bool include_lb_ips,
-                                const struct lr_stateful_record *);
+                                const struct lr_stateful_record *,
+                                bool allow_ipv6);
 
 struct ovn_port_routable_addresses
 get_op_addresses(const struct ovn_port *op,
@@ -1198,7 +1199,7 @@ get_op_addresses(const struct ovn_port *op,
 {
     size_t n;
     char **nats = get_nat_addresses(op, &n, routable_only, true,
-                                    lr_stateful_rec);
+                                    lr_stateful_rec, false);
 
     if (!nats) {
         return (struct ovn_port_routable_addresses) {
@@ -2571,7 +2572,8 @@ join_logical_ports(const struct sbrec_port_binding_table *sbrec_pb_table,
 static char **
 get_nat_addresses(const struct ovn_port *op, size_t *n, bool routable_only,
                   bool include_lb_ips,
-                  const struct lr_stateful_record *lr_stateful_rec)
+                  const struct lr_stateful_record *lr_stateful_rec,
+                  bool allow_ipv6)
 {
     size_t n_nats = 0;
     struct eth_addr mac;
@@ -2594,6 +2596,7 @@ get_nat_addresses(const struct ovn_port *op, size_t *n, bool routable_only,
     for (size_t i = 0; i < op->od->nbr->n_nat; i++) {
         const struct nbrec_nat *nat = op->od->nbr->nat[i];
         ovs_be32 ip, mask;
+        struct in6_addr ip6, mask6;
 
         if (routable_only &&
             (!strcmp(nat->type, "snat") ||
@@ -2604,7 +2607,15 @@ get_nat_addresses(const struct ovn_port *op, size_t *n, bool routable_only,
         char *error = ip_parse_masked(nat->external_ip, &ip, &mask);
         if (error || mask != OVS_BE32_MAX) {
             free(error);
-            continue;
+            if (allow_ipv6) {
+                error = ipv6_parse_masked(nat->external_ip, &ip6, &mask6);
+                if (error || ipv6_count_cidr_bits(&mask6) != 128) {
+                    free(error);
+                    continue;
+                }
+            } else {
+                continue;
+            }
         }
 
         /* Not including external IP of NAT rules whose gateway_port is
@@ -3987,7 +3998,8 @@ sync_pb_for_lsp(struct ovn_port *op,
                         lr_stateful_table, op->peer->od->index);
                 }
                 nats = get_nat_addresses(op->peer, &n_nats, false,
-                                         include_lb_vips, lr_stateful_rec);
+                                         include_lb_vips, lr_stateful_rec,
+                                         false);
             }
         } else if (nat_addresses && (chassis || l3dgw_ports)) {
             struct lport_addresses laddrs;
