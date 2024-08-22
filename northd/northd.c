@@ -14210,7 +14210,7 @@ build_lrouter_routing_protocol_redirect(
     /* Drop ARP replies and IPv6 RA/NA packets originating from
      * 'routing-protocol-redirect' LSP. As this port shares IP and MAC
      * addresses with LRP, we don't want to create duplicates.*/
-    ds_clear(match);
+/*    ds_clear(match);
     ds_put_format(match, "inport == \"%s\" && arp.op == 2",
                   redirect_port_name);
     ovn_lflow_add(lflows, op->peer->od, S_SWITCH_IN_CHECK_PORT_SEC, 80,
@@ -14232,7 +14232,7 @@ build_lrouter_routing_protocol_redirect(
     ovn_lflow_add(lflows, op->peer->od, S_SWITCH_IN_CHECK_PORT_SEC, 80,
                   ds_cstr(match),
                   REGBIT_PORT_SEC_DROP " = 1; next;",
-                  lflow_ref);
+                  lflow_ref);*/
 }
 
 /* This function adds ARP resolve flows related to a LSP. */
