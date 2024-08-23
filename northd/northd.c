@@ -12334,7 +12334,9 @@ copy_ra_to_sb(struct ovn_port *op, const char *address_mode)
 
     /* Remove trailing space */
     ds_chomp(&s, ' ');
-    smap_add(&options, "ipv6_ra_prefixes", ds_cstr(&s));
+    if (s.length){
+        smap_add(&options, "ipv6_ra_prefixes", ds_cstr(&s));
+    }
     ds_destroy(&s);
 
     const char *rdnss = smap_get(&op->nbrp->ipv6_ra_configs, "rdnss");

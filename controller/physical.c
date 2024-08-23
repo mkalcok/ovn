@@ -1856,16 +1856,16 @@ consider_port_binding(struct ovsdb_idl_index *sbrec_port_binding_by_name,
                             binding->header_.uuid.parts[0], &match,
                             ofpacts_p, &binding->header_.uuid);
 
-            /* Drop LOCAL_ONLY traffic leaking through localnet ports. */
+            /* Drop LOCAL_ONLY traffic leaking through localnet ports.
             ofpbuf_clear(ofpacts_p);
             put_drop(debug, OFTABLE_CHECK_LOOPBACK, ofpacts_p);
             match_outport_dp_and_port_keys(&match, dp_key, port_key);
             match_set_reg_masked(&match, MFF_LOG_FLAGS - MFF_REG0,
                                  MLF_LOCAL_ONLY, MLF_LOCAL_ONLY);
-            ofctrl_add_flow(flow_table, OFTABLE_CHECK_LOOPBACK, 160,
+            ofctrl_add_flow(flow_table, OFTABLE_CHECK_LOOPBACK, 161,
                             binding->header_.uuid.parts[0], &match,
                             ofpacts_p, &binding->header_.uuid);
-
+*/
             /* localport traffic directed to external is *not* local */
             struct shash_node *node;
             SHASH_FOR_EACH (node, &ld->external_ports) {
