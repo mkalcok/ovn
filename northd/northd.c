@@ -14537,14 +14537,6 @@ build_lrouter_routing_protocol_redirect(
                   ds_cstr(match),
                   REGBIT_PORT_SEC_DROP " = 1; next;",
                   lflow_ref);
-
-    ds_clear(match);
-    ds_put_format(match, "inport == \"%s\" && nd_ra",
-                  redirect_port_name);
-    ovn_lflow_add(lflows, op->peer->od, S_SWITCH_IN_CHECK_PORT_SEC, 80,
-                  ds_cstr(match),
-                  REGBIT_PORT_SEC_DROP " = 1; next;",
-                  lflow_ref);
 }
 
 /* This function adds ARP resolve flows related to a LSP. */
