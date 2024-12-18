@@ -18,6 +18,10 @@ Post v24.09.0
      The routes can furthe be filtered by setting `dynamic-routing-connected`
      and `dynamic-routing-static` on the LR or LRP. The LRP settings overwrite
      the LR settings for all routes using this interface as an exit.
+   - Allow Logical Routers to dynamically learn routes from outside the fabric.
+     Routes entered into the "Route" table in the southbound database will be
+     learned by the respective LR. They are included in the route table with
+     a lower priority than static routes.
 
 OVN v24.09.0 - 13 Sep 2024
 --------------------------

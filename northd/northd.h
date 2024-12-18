@@ -185,6 +185,10 @@ struct routes_data {
     struct hmap bfd_active_connections;
 };
 
+struct routes_sync_data {
+    struct hmap parsed_routes;
+};
+
 struct route_policies_data {
     struct hmap route_policies;
     struct hmap bfd_active_connections;
@@ -701,6 +705,8 @@ enum route_source {
     ROUTE_SOURCE_CONNECTED,
     /* The route is derived from a northbound static route entry. */
     ROUTE_SOURCE_STATIC,
+    /* the route is learned by an ovn-controller */
+    ROUTE_SOURCE_LEARNED,
 };
 
 struct parsed_route {
@@ -711,16 +717,40 @@ struct parsed_route {
     bool is_src_route;
     uint32_t route_table_id;
     uint32_t hash;
-    const struct nbrec_logical_router_static_route *route;
     bool ecmp_symmetric_reply;
     bool is_discard_route;
     const struct ovn_datapath *od;
     bool stale;
     struct sset ecmp_selection_fields;
     enum route_source source;
+    const struct ovsdb_idl_row *source_hint;
     char *lrp_addr_s;
     const struct ovn_port *out_port;
 };
+
+struct parsed_route * parsed_route_clone(const struct parsed_route *pr);
+size_t parsed_route_hash(const struct parsed_route *pr);
+void parsed_route_free(struct parsed_route *pr);
+void parsed_route_add(const struct ovn_datapath *od,
+                      struct in6_addr *nexthop,
+                      const struct in6_addr *prefix,
+                      unsigned int plen,
+                      bool is_discard_route,
+                      const char *lrp_addr_s,
+                      const struct ovn_port *out_port,
+                      uint32_t route_table_id,
+                      bool is_src_route,
+                      bool ecmp_symmetric_reply,
+                      const struct sset *ecmp_selection_fields,
+                      enum route_source source,
+                      const struct ovsdb_idl_row *source_hint,
+                      struct hmap *routes);
+
+bool
+find_route_outport(const struct hmap *lr_ports, const char *output_port,
+                   const char *ip_prefix, const char *nexthop, bool is_ipv4,
+                   bool force_out_port,
+                   struct ovn_port **out_port, const char **lrp_addr_s);
 
 void ovnnb_db_run(struct northd_input *input_data,
                   struct northd_data *data,
