@@ -12,6 +12,9 @@ Post v24.09.0
      and "routing-protocols" are now also usable on distributed gateway ports.
    - ovn-nb: Changed schema of ovn-nb to make networks optional within Logical
      Router Ports.
+   - Add the option "dynamic-routing" to Logical Routers. If set to true all
+     static and connected routes attached to the router are shared to the
+     southbound "Route" table for sharing outside of OVN.
 
 OVN v24.09.0 - 13 Sep 2024
 --------------------------
