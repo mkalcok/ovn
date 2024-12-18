@@ -3775,6 +3775,29 @@ or
           </li>
         </ul>
       </column>
+
+      <column name="options" key="maintain-vrf" type='{"type": "boolean"}'>
+        Only relevant if <ref column="options" key="dynamic-routing"
+        table="Logical_Router"/> on the respective Logical_Router is set
+          to <code>true</code>.
+
+          If this LRP is bound to a specific chassis then the ovn-controller of
+          this chassis will maintain a vrf named "ovnvrf" with the datapath id
+          of the Logical Router appended to it.
+          This vrf will contain all the routes that should be announced from
+          this LRP.
+      </column>
+
+      <column name="options" key="dynamic-routing-ifname"
+          type='{"type": "string"}'>
+        Only relevant if <ref column="options" key="dynamic-routing"
+        table="Logical_Router"/> on the respective Logical_Router is set
+          to <code>true</code>.
+
+          Only learn routes associated with the interface specified here.
+          This allows a single chassis to learn different routes on separate
+          LRPs bound to this chassis.
+      </column>
     </group>
 
     <group title="Attachment">
