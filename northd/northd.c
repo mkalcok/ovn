@@ -1289,34 +1289,6 @@ ovn_port_destroy(struct hmap *ports, struct ovn_port *port)
     }
 }
 
-/* Returns the ovn_port that matches 'name'.  If 'prefer_bound' is true and
- * multiple ports share the same name, gives precendence to ports bound to
- * an ovn_datapath.
- */
-static struct ovn_port *
-ovn_port_find__(const struct hmap *ports, const char *name,
-                bool prefer_bound)
-{
-    struct ovn_port *matched_op = NULL;
-    struct ovn_port *op;
-
-    HMAP_FOR_EACH_WITH_HASH (op, key_node, hash_string(name, 0), ports) {
-        if (!strcmp(op->key, name)) {
-            matched_op = op;
-            if (!prefer_bound || op->od) {
-                return op;
-            }
-        }
-    }
-    return matched_op;
-}
-
-static struct ovn_port *
-ovn_port_find(const struct hmap *ports, const char *name)
-{
-    return ovn_port_find__(ports, name, false);
-}
-
 static bool
 lsp_is_clone_to_unknown(const struct nbrec_logical_switch_port *nbsp)
 {
@@ -1329,12 +1301,6 @@ lsp_is_clone_to_unknown(const struct nbrec_logical_switch_port *nbsp)
         }
     }
     return false;
-}
-
-static struct ovn_port *
-ovn_port_find_bound(const struct hmap *ports, const char *name)
-{
-    return ovn_port_find__(ports, name, true);
 }
 
 /* Returns true if the logical switch port 'enabled' column is empty or
@@ -3409,6 +3375,7 @@ cleanup_mac_bindings(
         }
     }
 }
+
 
 static void
 cleanup_sb_ha_chassis_groups(

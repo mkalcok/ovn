@@ -904,4 +904,38 @@ is_vxlan_mode(const struct smap *nb_options,
 
 uint32_t get_ovn_max_dp_key_local(bool _vxlan_mode);
 
+/* Returns the ovn_port that matches 'name'.  If 'prefer_bound' is true and
+ * multiple ports share the same name, gives precendence to ports bound to
+ * an ovn_datapath.
+ */
+static struct ovn_port *
+ovn_port_find__(const struct hmap *ports, const char *name,
+                bool prefer_bound)
+{
+    struct ovn_port *matched_op = NULL;
+    struct ovn_port *op;
+
+    HMAP_FOR_EACH_WITH_HASH (op, key_node, hash_string(name, 0), ports) {
+        if (!strcmp(op->key, name)) {
+            matched_op = op;
+            if (!prefer_bound || op->od) {
+                return op;
+            }
+        }
+    }
+    return matched_op;
+}
+
+static inline struct ovn_port *
+ovn_port_find(const struct hmap *ports, const char *name)
+{
+    return ovn_port_find__(ports, name, false);
+}
+
+static inline struct ovn_port *
+ovn_port_find_bound(const struct hmap *ports, const char *name)
+{
+    return ovn_port_find__(ports, name, true);
+}
+
 #endif /* NORTHD_H */
