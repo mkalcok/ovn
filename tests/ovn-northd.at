@@ -14392,7 +14392,9 @@ ovn_start
 
 # adding a router - still nothing here
 check ovn-nbctl lr-add lr0
-check ovn-nbctl --wait=sb set Logical_Router lr0 option:dynamic-routing=true
+check ovn-nbctl --wait=sb set Logical_Router lr0 option:dynamic-routing=true \
+                                 option:dynamic-routing-connected=true \
+                                 option:dynamic-routing-static=true
 check_row_count Advertised_Route 0
 datapath=$(ovn-sbctl --bare --columns _uuid list datapath_binding lr0)
 
@@ -14437,6 +14439,63 @@ check_row_count Advertised_Route 1 logical_port=$pb2
 # removing the lr will remove all routes
 check ovn-nbctl --wait=sb lr-del lr0
 check_row_count Advertised_Route 0
+
+AT_CLEANUP
+])
+
+OVN_FOR_EACH_NORTHD_NO_HV([
+AT_SETUP([dynamic-routing - sync to sb filtering])
+AT_KEYWORDS([dynamic-routing])
+ovn_start
+
+# we start with announcing everything on a lr with 2 lrps and 2 static routes
+check ovn-nbctl lr-add lr0
+check ovn-nbctl --wait=sb set Logical_Router lr0 option:dynamic-routing=true \
+                                 option:dynamic-routing-connected=true \
+                                 option:dynamic-routing-static=true
+check ovn-nbctl --wait=sb lrp-add lr0 lr0-sw0 00:00:00:00:ff:01 10.0.0.1/24
+sw0=$(ovn-sbctl --bare --columns _uuid list port_binding lr0-sw0)
+check ovn-nbctl --wait=sb lrp-add lr0 lr0-sw1 00:00:00:00:ff:02 10.0.1.1/24
+sw1=$(ovn-sbctl --bare --columns _uuid list port_binding lr0-sw1)
+check ovn-nbctl --wait=sb lr-route-add lr0 192.168.0.0/24 10.0.0.10
+check ovn-nbctl --wait=sb lr-route-add lr0 192.168.1.0/24 10.0.1.10
+check_row_count Advertised_Route 4
+datapath=$(ovn-sbctl --bare --columns _uuid list datapath_binding lr0)
+
+# disabeling connected routes just keeps the static ones
+check ovn-nbctl --wait=sb remove Logical_Router lr0 option dynamic-routing-connected
+check_row_count Advertised_Route 2
+AT_CHECK([ovn-sbctl --columns ip_prefix --bare find Advertised_Route datapath=$datapath logical_port=$sw0], [0], [dnl
+192.168.0.0/24
+])
+AT_CHECK([ovn-sbctl --columns ip_prefix --bare find Advertised_Route datapath=$datapath logical_port=$sw1], [0], [dnl
+192.168.1.0/24
+])
+
+# enabeling it on lr0-sw0 will just bring this one route back
+check ovn-nbctl --wait=sb set Logical_Router_Port lr0-sw0 option:dynamic-routing-connected=true
+check_row_count Advertised_Route 3
+check_row_count Advertised_Route 2 logical_port=$sw0
+check_row_count Advertised_Route 1 logical_port=$sw0 ip_prefix=10.0.0.0/24
+check_row_count Advertised_Route 1 logical_port=$sw0 ip_prefix=192.168.0.0/24
+
+# disabeling static routes just keeps the one explicit connected route
+check ovn-nbctl --wait=sb remove Logical_Router lr0 option dynamic-routing-static
+check_row_count Advertised_Route 1
+AT_CHECK([ovn-sbctl --columns ip_prefix --bare find Advertised_Route datapath=$datapath logical_port=$sw0], [0], [dnl
+10.0.0.0/24
+])
+
+# enabeling static routes on the LR, but disabeling them on lr0-sw0 also works
+check ovn-nbctl --wait=sb set Logical_Router lr0 option:dynamic-routing-static=true
+check ovn-nbctl --wait=sb set Logical_Router_Port lr0-sw0 option:dynamic-routing-static=false
+check_row_count Advertised_Route 2
+AT_CHECK([ovn-sbctl --columns ip_prefix --bare find Advertised_Route datapath=$datapath logical_port=$sw0], [0], [dnl
+10.0.0.0/24
+])
+AT_CHECK([ovn-sbctl --columns ip_prefix --bare find Advertised_Route datapath=$datapath logical_port=$sw1], [0], [dnl
+192.168.1.0/24
+])
 
 AT_CLEANUP
 ])

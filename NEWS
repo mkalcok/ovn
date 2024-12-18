@@ -15,6 +15,9 @@ Post v24.09.0
    - Add the option "dynamic-routing" to Logical Routers. If set to true all
      static and connected routes attached to the router are shared to the
      southbound "Route" table for sharing outside of OVN.
+     The routes can furthe be filtered by setting `dynamic-routing-connected`
+     and `dynamic-routing-static` on the LR or LRP. The LRP settings overwrite
+     the LR settings for all routes using this interface as an exit.
 
 OVN v24.09.0 - 13 Sep 2024
 --------------------------
