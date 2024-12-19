@@ -16,6 +16,7 @@
 #define ROUTE_EXCHANGE_H 1
 
 #include <stdbool.h>
+#include "openvswitch/hmap.h"
 
 struct route_exchange_ctx_in {
     struct ovsdb_idl_txn *ovnsb_idl_txn;
@@ -26,6 +27,8 @@ struct route_exchange_ctx_in {
 };
 
 struct route_exchange_ctx_out {
+    /* contains route_table_watch */
+    struct hmap route_table_watches;
 };
 
 void route_exchange_run(struct route_exchange_ctx_in *,
