@@ -89,6 +89,7 @@
 #include "ct-zone.h"
 #include "ovn-dns.h"
 #include "route.h"
+#include "route-exchange.h"
 
 VLOG_DEFINE_THIS_MODULE(main);
 
@@ -4791,6 +4792,14 @@ controller_output_bfd_chassis_handler(struct engine_node *node,
     return true;
 }
 
+static bool
+controller_output_route_exchange_handler(struct engine_node *node,
+                                         void *data OVS_UNUSED)
+{
+    engine_set_node_state(node, EN_UPDATED);
+    return true;
+}
+
 /* Handles sbrec_chassis changes.
  * If a new chassis is added or removed return false, so that
  * flows are recomputed.  For any updates, there is no need for
@@ -4982,6 +4991,36 @@ route_sb_advertised_route_data_handler(struct engine_node *node, void *data)
     }
     return true;
 }
+
+static void
+en_route_exchange_run(struct engine_node *node, void *data OVS_UNUSED)
+{
+    struct ed_type_route *route_data =
+        engine_get_input_data("route", node);
+
+    struct route_exchange_ctx_in r_ctx_in = {
+        .announce_routes = &route_data->announce_routes,
+    };
+
+    struct route_exchange_ctx_out r_ctx_out = {
+    };
+
+    route_exchange_run(&r_ctx_in, &r_ctx_out);
+
+    engine_set_node_state(node, EN_UPDATED);
+}
+
+
+static void *
+en_route_exchange_init(struct engine_node *node OVS_UNUSED,
+                       struct engine_arg *arg OVS_UNUSED)
+{
+    return NULL;
+}
+
+static void
+en_route_exchange_cleanup(void *data OVS_UNUSED)
+{}
 
 /* Returns false if the northd internal version stored in SB_Global
  * and ovn-controller internal version don't match.
@@ -5278,6 +5317,7 @@ main(int argc, char *argv[])
     ENGINE_NODE(bfd_chassis, "bfd_chassis");
     ENGINE_NODE(dns_cache, "dns_cache");
     ENGINE_NODE(route, "route");
+    ENGINE_NODE(route_exchange, "route_exchange");
 
 #define SB_NODE(NAME, NAME_STR) ENGINE_NODE_SB(NAME, NAME_STR);
     SB_NODES
@@ -5308,6 +5348,8 @@ main(int argc, char *argv[])
                      route_runtime_data_handler);
     engine_add_input(&en_route, &en_sb_advertised_route,
                      route_sb_advertised_route_data_handler);
+
+    engine_add_input(&en_route_exchange, &en_route, NULL);
 
     engine_add_input(&en_addr_sets, &en_sb_address_set,
                      addr_sets_sb_address_set_handler);
@@ -5494,9 +5536,8 @@ main(int argc, char *argv[])
                      controller_output_mac_cache_handler);
     engine_add_input(&en_controller_output, &en_bfd_chassis,
                      controller_output_bfd_chassis_handler);
-    /* This is just temporary until the route output is actually used. */
-    engine_add_input(&en_controller_output, &en_route,
-                     controller_output_bfd_chassis_handler);
+    engine_add_input(&en_controller_output, &en_route_exchange,
+                     controller_output_route_exchange_handler);
 
     struct engine_arg engine_arg = {
         .sb_idl = ovnsb_idl_loop.idl,
@@ -6224,6 +6265,7 @@ loop_done:
 
             poll_block();
         }
+        route_exchange_cleanup();
     }
 
     free(ovn_version);
@@ -6253,6 +6295,7 @@ loop_done:
     service_stop();
     ovsrcu_exit();
     dns_resolve_destroy();
+    route_exchange_destroy();
 
     exit(retval);
 }
