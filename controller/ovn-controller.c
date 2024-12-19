@@ -868,7 +868,8 @@ ctrl_register_ovs_idl(struct ovsdb_idl *ovs_idl)
     SB_NODE(meter, "meter") \
     SB_NODE(static_mac_binding, "static_mac_binding") \
     SB_NODE(chassis_template_var, "chassis_template_var") \
-    SB_NODE(advertised_route, "advertised_route")
+    SB_NODE(advertised_route, "advertised_route") \
+    SB_NODE(learned_route, "learned_route")
 
 enum sb_engine_node {
 #define SB_NODE(NAME, NAME_STR) SB_##NAME,
@@ -4995,10 +4996,23 @@ route_sb_advertised_route_data_handler(struct engine_node *node, void *data)
 static void
 en_route_exchange_run(struct engine_node *node, void *data OVS_UNUSED)
 {
+    struct ovsdb_idl_index *sbrec_learned_route_by_datapath =
+        engine_ovsdb_node_get_index(
+            engine_get_input("SB_learned_route", node),
+            "datapath");
+
+    struct ovsdb_idl_index *sbrec_port_binding_by_name =
+        engine_ovsdb_node_get_index(
+                engine_get_input("SB_port_binding", node),
+                "name");
+
     struct ed_type_route *route_data =
         engine_get_input_data("route", node);
 
     struct route_exchange_ctx_in r_ctx_in = {
+        .ovnsb_idl_txn = engine_get_context()->ovnsb_idl_txn,
+        .sbrec_learned_route_by_datapath = sbrec_learned_route_by_datapath,
+        .sbrec_port_binding_by_name = sbrec_port_binding_by_name,
         .announce_routes = &route_data->announce_routes,
     };
 
@@ -5233,6 +5247,9 @@ main(int argc, char *argv[])
     struct ovsdb_idl_index *sbrec_advertised_route_index_by_datapath
         = ovsdb_idl_index_create1(ovnsb_idl_loop.idl,
                                   &sbrec_advertised_route_col_datapath);
+    struct ovsdb_idl_index *sbrec_learned_route_index_by_datapath
+        = ovsdb_idl_index_create1(ovnsb_idl_loop.idl,
+                                  &sbrec_learned_route_col_datapath);
 
     ovsdb_idl_track_add_all(ovnsb_idl_loop.idl);
     ovsdb_idl_omit_alert(ovnsb_idl_loop.idl,
@@ -5350,6 +5367,10 @@ main(int argc, char *argv[])
                      route_sb_advertised_route_data_handler);
 
     engine_add_input(&en_route_exchange, &en_route, NULL);
+    engine_add_input(&en_route_exchange, &en_sb_learned_route,
+                     engine_noop_handler);
+    engine_add_input(&en_route_exchange, &en_sb_port_binding,
+                     engine_noop_handler);
 
     engine_add_input(&en_addr_sets, &en_sb_address_set,
                      addr_sets_sb_address_set_handler);
@@ -5570,6 +5591,8 @@ main(int argc, char *argv[])
                                 sbrec_chassis_template_var_index_by_chassis);
     engine_ovsdb_node_add_index(&en_sb_advertised_route, "datapath",
                                 sbrec_advertised_route_index_by_datapath);
+    engine_ovsdb_node_add_index(&en_sb_learned_route, "datapath",
+                                sbrec_learned_route_index_by_datapath);
     engine_ovsdb_node_add_index(&en_ovs_flow_sample_collector_set, "id",
                                 ovsrec_flow_sample_collector_set_by_id);
     engine_ovsdb_node_add_index(&en_ovs_port, "qos", ovsrec_port_by_qos);
