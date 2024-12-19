@@ -18,6 +18,7 @@
 #include <stdint.h>
 #include "openvswitch/hmap.h"
 #include <netinet/in.h>
+#include <net/if.h>
 
 /* This value is arbitrary but currently unused.
  * See https://github.com/iproute2/iproute2/blob/main/etc/iproute2/rt_protos */
@@ -31,6 +32,7 @@ struct re_nl_received_route_node {
     struct in6_addr addr;
     unsigned int plen;
     struct in6_addr nexthop;
+    char ifname[IFNAMSIZ];
 };
 
 int re_nl_create_vrf(const char *ifname, uint32_t table_id);
