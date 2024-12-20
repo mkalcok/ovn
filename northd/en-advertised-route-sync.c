@@ -421,9 +421,20 @@ advertised_route_table_sync(
                                         "dynamic-routing-static")) {
             continue;
         }
+        if (route->source == ROUTE_SOURCE_NAT &&
+                !smap_get_bool(&route->out_port->nbrp->options,
+                               "redistribute-nat", false)) {
+                continue;
+        }
+        if (route->source == ROUTE_SOURCE_LB &&
+                !smap_get_bool(&route->out_port->nbrp->options,
+                               "redistribute-lb-vips", false)) {
+                continue;
+        }
 
         char *ip_prefix = normalize_v46_prefix(&route->prefix,
                                                route->plen);
+
         ar_sync_to_sb(ovnsb_txn, &sync_routes,
                          route->od->sb,
                          route->out_port->sb,
