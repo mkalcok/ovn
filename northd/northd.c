@@ -11384,6 +11384,96 @@ parsed_routes_add_connected(const struct ovn_datapath *od,
     }
 }
 
+static void
+parsed_routes_add_nat(const struct ovn_datapath *od,
+                      const struct ovn_port *op,
+                      struct hmap *routes)
+{
+    if (!op->nbrp || !smap_get_bool(&op->nbrp->options,
+                                    "redistribute-nat", false)) {
+        return;
+    }
+
+    size_t n_nats = 0;
+    char **nats = NULL;
+    nats = get_nat_addresses(op, &n_nats, false, false, NULL, true);
+
+    for (size_t i = 0; i < n_nats; i++) {
+        struct lport_addresses *laddrs = xzalloc(sizeof *laddrs);
+        int ofs = 0;
+        extract_addresses(nats[i], laddrs, &ofs);
+        for (int j = 0; j < laddrs->n_ipv4_addrs; j++) {
+            struct ipv4_netaddr *addr = &laddrs->ipv4_addrs[j];
+            struct in6_addr prefix;
+            ip46_parse(addr->network_s, &prefix);
+
+            parsed_route_add(od, NULL, &prefix, addr->plen,
+                             false, addr->addr_s, op,
+                             0, false,
+                             false, NULL, ROUTE_SOURCE_NAT,
+                             &op->nbrp->header_, routes);
+        }
+        for (int j = 0; j < laddrs->n_ipv6_addrs; j++) {
+            struct ipv6_netaddr *addr = &laddrs->ipv6_addrs[j];
+            parsed_route_add(od, NULL, &addr->addr, addr->plen,
+                             false, addr->addr_s, op,
+                             0, false,
+                             false, NULL, ROUTE_SOURCE_NAT,
+                             &op->nbrp->header_, routes);
+        }
+        destroy_lport_addresses(laddrs);
+        free(nats[i]);
+    }
+    free(nats);
+}
+
+static void
+parsed_routes_add_lb(const struct ovn_datapath *od,
+                     const struct ovn_port *op,
+                     struct hmap *routes)
+{
+    if (!op->nbrp || !smap_get_bool(&op->nbrp->options,
+                                    "redistribute-lb-vips", false)) {
+        return;
+    }
+
+    for (size_t i = 0; i < od->nbr->n_load_balancer; i++) {
+        struct ovn_northd_lb *lb = ovn_northd_lb_create(
+                                        od->nbr->load_balancer[i]);
+        for (size_t j = 0; j < lb->n_vips; j++) {
+            const struct ovn_lb_vip *lb_vip = &lb->vips[j];
+            if (find_lport_address(&op->lrp_networks, lb_vip->vip_str)) {
+                int plen = lb_vip->address_family == AF_INET ? 32 : 128;
+                parsed_route_add(od, NULL, &lb_vip->vip, plen,
+                                 false, lb_vip->vip_str, op,
+                                 0, false,
+                                 false, NULL, ROUTE_SOURCE_LB,
+                                 &op->nbrp->header_, routes);
+            }
+        }
+    }
+
+    for (size_t i = 0; i < od->nbr->n_load_balancer_group; i++) {
+        struct nbrec_load_balancer_group *lb_group =
+            od->nbr->load_balancer_group[i];
+        for (size_t j = 0; j < lb_group->n_load_balancer; j++) {
+            struct ovn_northd_lb *lb =
+                ovn_northd_lb_create(lb_group->load_balancer[j]);
+            for (size_t k = 0; k < lb->n_vips; k++) {
+                const struct ovn_lb_vip *lb_vip = &lb->vips[k];
+                if (find_lport_address(&op->lrp_networks, lb_vip->vip_str)) {
+                    int plen = lb_vip->address_family == AF_INET ? 32 : 128;
+                    parsed_route_add(od, NULL, &lb_vip->vip, plen,
+                                     false, lb_vip->vip_str, op,
+                                     0, false,
+                                     false, NULL, ROUTE_SOURCE_LB,
+                                     &op->nbrp->header_, routes);
+                }
+            }
+        }
+    }
+}
+
 void
 build_parsed_routes(const struct ovn_datapath *od, const struct hmap *lr_ports,
                      const struct hmap *bfd_connections, struct hmap *routes,
@@ -11406,6 +11496,8 @@ build_parsed_routes(const struct ovn_datapath *od, const struct hmap *lr_ports,
     const struct ovn_port *op;
     HMAP_FOR_EACH (op, dp_node, &od->ports) {
         parsed_routes_add_connected(od, op, routes);
+        parsed_routes_add_nat(od, op, routes);
+        parsed_routes_add_lb(od, op, routes);
     }
 
     HMAP_FOR_EACH_SAFE (pr, key_node, routes) {
@@ -11587,6 +11679,8 @@ route_source_to_offset(enum route_source source)
 {
     switch (source) {
         case ROUTE_SOURCE_CONNECTED:
+        case ROUTE_SOURCE_NAT:
+        case ROUTE_SOURCE_LB:
             return ROUTE_PRIO_OFFSET_CONNECTED;
         case ROUTE_SOURCE_STATIC:
             return ROUTE_PRIO_OFFSET_STATIC;
@@ -13864,7 +13958,9 @@ build_route_flows_for_lrouter(
     struct parsed_route *route;
     HMAP_FOR_EACH_WITH_HASH (route, key_node, uuid_hash(&od->key),
                              parsed_routes) {
-        if (route->source == ROUTE_SOURCE_CONNECTED) {
+        if (route->source == ROUTE_SOURCE_CONNECTED ||
+                route->source == ROUTE_SOURCE_NAT ||
+                route->source == ROUTE_SOURCE_LB) {
             unique_routes_add(&unique_routes, route);
             continue;
         }

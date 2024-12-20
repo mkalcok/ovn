@@ -702,6 +702,10 @@ enum route_source {
     ROUTE_SOURCE_CONNECTED,
     /* The route is derived from a northbound static route entry. */
     ROUTE_SOURCE_STATIC,
+    /* Host route generated from NAT's external IP. */
+    ROUTE_SOURCE_NAT,
+    /* Host route generated from LB's external IP. */
+    ROUTE_SOURCE_LB,
     /* the route is learned by an ovn-controller */
     ROUTE_SOURCE_LEARNED,
 };

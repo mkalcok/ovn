@@ -2961,6 +2961,10 @@ or
                table="Logical_Router_Port"/>
         * <ref column="options" key="dynamic-routing-static"
                table="Logical_Router_Port"/>
+        * <ref column="options" key="redistribute-lb-vips"
+               table="Logical_Router_Port"/>
+        * <ref column="options" key="redistribute-nat"
+               table="Logical_Router_Port"/>
       </column>
 
       <column name="options" key="dynamic-routing-connected"
@@ -3797,6 +3801,33 @@ or
           Only learn routes associated with the interface specified here.
           This allows a single chassis to learn different routes on separate
           LRPs bound to this chassis.
+      </column>
+
+      <column name="options" key="redistribute-lb-vips"
+              type='{"type": "boolean"}'>
+        <p>
+          Only relevant if <ref column="options" key="dynamic-routing"
+          table="Logical_Router"/> on the respective Logical_Router is set
+          to <code>true</code>.
+
+          If this option is <code>true</code>, northd will create host route
+          entries in the southbound <ref table="Advertised_Route"
+          db="OVN_Southbound"/> table, associated with this LRP, for each LB
+          VIP.
+        </p>
+      </column>
+
+      <column name="options" key="redistribute-nat" type='{"type": "boolean"}'>
+        <p>
+          Only relevant if <ref column="options" key="dynamic-routing"
+          table="Logical_Router"/> on the respective Logical_Router is set
+          to <code>true</code>.
+
+          If this option is <code>true</code>, northd will create host route
+          entries in the southbound <ref table="Advertised_Route"
+          db="OVN_Southbound"/> table, for external IP addresses of NAT rules
+          associated with this LRP.
+        </p>
       </column>
     </group>
 
