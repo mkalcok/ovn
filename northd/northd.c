@@ -4094,6 +4094,12 @@ sync_pb_for_lrp(struct ovn_port *op,
             if (ifname) {
                 smap_add(&new, "dynamic-routing-ifname", ifname);
             }
+            if (smap_get_bool(&op->nbrp->options, "redistribute-nat", false)) {
+                smap_add(&new, "redistribute-nat", "true");
+            }
+            if (smap_get_bool(&op->nbrp->options, "redistribute-lb-vips", false)) {
+                smap_add(&new, "redistribute-lb-vips", "true");
+            }
         }
     }
 
@@ -11453,6 +11459,85 @@ parsed_routes_add_connected(const struct ovn_datapath *od,
     }
 }
 
+static void
+parsed_routes_add_nat(const struct ovn_datapath *od,
+                      const struct ovn_port *op,
+                      struct hmap *routes)
+{
+    if (!op->nbrp || !smap_get_bool(&op->nbrp->options, "redistribute-nat", false)) {
+        return;
+    }
+
+    size_t n_nats = 0;
+    char **nats = NULL;
+    nats = get_nat_addresses(op, &n_nats, false, false, NULL, true);
+
+    for (size_t i = 0; i < n_nats; i++){
+        struct lport_addresses *laddrs = xzalloc(sizeof *laddrs);
+        int ofs = 0;
+        extract_addresses(nats[i], laddrs, &ofs);
+        for (int j = 0; j < laddrs->n_ipv4_addrs; j++){
+            struct ipv4_netaddr *addr = &laddrs->ipv4_addrs[j];
+            struct in6_addr prefix;
+            ip46_parse(addr->network_s, &prefix);
+
+            parsed_route_add(od, NULL, &prefix, addr->plen,
+                             false, addr->addr_s, op,
+                             0, false,
+                             false, NULL, ROUTE_SOURCE_NAT,
+                             &op->nbrp->header_, routes);
+        }
+        destroy_lport_addresses(laddrs);
+        free(nats[i]);
+    }
+    free(nats);
+}
+
+static void
+advertise_lb_route(const struct ovn_datapath *od,
+                  const struct ovn_port *op,
+                  const char *ip_s,
+                  struct hmap *routes){
+    struct in6_addr prefix;
+    ip46_parse(ip_s, &prefix);
+
+    parsed_route_add(od, NULL, &prefix, 32,
+                     false, ip_s, op,
+                     0, false,
+                     false, NULL, ROUTE_SOURCE_LB,
+                     &op->nbrp->header_, routes);
+
+}
+static void
+parsed_routes_add_lb(const struct ovn_datapath *od,
+                     const struct ovn_port *op,
+                     struct hmap *routes)
+{
+    if (!op->nbrp || !smap_get_bool(&op->nbrp->options, "redistribute-lb-vips", false)) {
+        return;
+    }
+
+    struct smap_node *node;
+    for (size_t i = 0; i < od->nbr->n_load_balancer; i++) {
+        SMAP_FOR_EACH (node, &od->nbr->load_balancer[i]->vips) {
+            if (find_lport_address(&op->lrp_networks, node->key)) {
+                advertise_lb_route(od, op, node->key, routes);
+            }
+        }
+    }
+
+    for (size_t i = 0; i < od->nbr->n_load_balancer_group; i++) {
+        struct nbrec_load_balancer_group *lb_group = od->nbr->load_balancer_group[i];
+        for (size_t j = 0; j < lb_group->n_load_balancer; j++) {
+            SMAP_FOR_EACH (node, &lb_group->load_balancer[j]->vips) {
+                if (find_lport_address(&op->lrp_networks, node->key)) {
+                    advertise_lb_route(od, op, node->key, routes);
+                }
+            }
+        }
+    }
+}
+
 void
 build_parsed_routes(const struct ovn_datapath *od, const struct hmap *lr_ports,
                     const struct hmap *bfd_connections, struct hmap *routes,
@@ -11475,6 +11560,8 @@ build_parsed_routes(const struct ovn_datapath *od, const struct hmap *lr_ports,
     const struct ovn_port *op;
     HMAP_FOR_EACH (op, dp_node, &od->ports) {
         parsed_routes_add_connected(od, op, routes);
+        parsed_routes_add_nat(od, op, routes);
+        parsed_routes_add_lb(od, op, routes);
     }
 
     HMAP_FOR_EACH_SAFE (pr, key_node, routes) {
@@ -11656,6 +11743,8 @@ route_source_to_offset(enum route_source source)
 {
     switch (source) {
     case ROUTE_SOURCE_CONNECTED:
+    case ROUTE_SOURCE_NAT:
+    case ROUTE_SOURCE_LB:
         return ROUTE_PRIO_OFFSET_CONNECTED;
     case ROUTE_SOURCE_STATIC:
         return ROUTE_PRIO_OFFSET_STATIC;
@@ -13934,7 +14023,9 @@ build_route_flows_for_lrouter(
     struct parsed_route *route;
     HMAP_FOR_EACH_WITH_HASH (route, key_node, uuid_hash(&od->key),
                              parsed_routes) {
-        if (route->source == ROUTE_SOURCE_CONNECTED) {
+        if (route->source == ROUTE_SOURCE_CONNECTED ||
+                route->source == ROUTE_SOURCE_NAT ||
+                route->source == ROUTE_SOURCE_LB) {
             unique_routes_add(&unique_routes, route);
             continue;
         }

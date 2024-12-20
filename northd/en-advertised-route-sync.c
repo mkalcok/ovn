@@ -361,6 +361,16 @@ advertised_route_table_sync(
                 !route->out_port->dynamic_routing_static) {
             continue;
         }
+        if (route->source == ROUTE_SOURCE_NAT &&
+                !smap_get_bool(&route->out_port->nbrp->options,
+                               "redistribute-nat", false)) {
+                continue;
+        }
+        if (route->source == ROUTE_SOURCE_LB &&
+                !smap_get_bool(&route->out_port->nbrp->options,
+                               "redistribute-lb-vips", false)) {
+                continue;
+        }
 
         char *ip_prefix = normalize_v46_prefix(&route->prefix,
                                                route->plen);
