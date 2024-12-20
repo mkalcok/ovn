@@ -16,6 +16,7 @@
 
 #include <config.h>
 
+#include "openvswitch/vlog.h"
 #include "smap.h"
 #include "stopwatch.h"
 #include "northd.h"
@@ -25,6 +26,8 @@
 #include "lib/stopwatch-names.h"
 #include "openvswitch/hmap.h"
 #include "ovn-util.h"
+
+VLOG_DEFINE_THIS_MODULE(en_advertised_route_sync);
 
 static void
 advertised_route_table_sync(
@@ -312,6 +315,185 @@ publish_host_routes(struct hmap *sync_routes,
     }
 }
 
+/* This function searches for an ovn_port with specific "op_ip"
+ * IP address in all LS datapaths directly connected to the
+ * LR datapath "od".
+ * If no match is found, this function returns NULL.*/
+static struct ovn_port *
+find_port_in_connected_ls(struct ovn_datapath *od, char *op_ip)
+{
+    struct in6_addr *ip_addr = xmalloc(sizeof *ip_addr);
+    unsigned int plen;
+    bool is_ipv4 = true;
+
+    /* Return immediately if op_ip isn't a host route.*/
+    if (!ip46_parse_cidr(op_ip, ip_addr, &plen)) {
+        static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 1);
+        VLOG_WARN_RL(&rl, "bad IP for OVN port: %s", op_ip);
+        free(ip_addr);
+        return NULL;
+    }
+    if (IN6_IS_ADDR_V4MAPPED(ip_addr) && plen != 32) {
+        if (plen != 32) {
+            free(ip_addr);
+            return NULL;
+        }
+    } else {
+        is_ipv4 = false;
+        if (plen != 128) {
+            free(ip_addr);
+            return NULL;
+        }
+    }
+    free(ip_addr);
+
+    for (int i = 0; i < od->n_ls_peers; i++) {
+        struct ovn_datapath *peer_od = od->ls_peers[i];
+        struct ovn_port *op;
+        HMAP_FOR_EACH (op, dp_node, &peer_od->ports) {
+            for (int j = 0; j < op->n_lsp_addrs; j++) {
+                struct lport_addresses *addrs = &op->lsp_addrs[j];
+                if (is_ipv4) {
+                    for (int k = 0; k < addrs->n_ipv4_addrs; k++) {
+                        if (!strcmp(op_ip, addrs->ipv4_addrs[k].addr_s)) {
+                            return op;
+                        }
+                    }
+                } else {
+                    for (int k = 0; k < addrs->n_ipv6_addrs; k++) {
+                        if (!strcmp(op_ip, addrs->ipv6_addrs[k].addr_s)) {
+                            return op;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return NULL;
+}
+
+/* Publish parsed_route as a Advertised_Route record. The main purpose
+ * of this function is to find LSP with IP address that matches the
+ * logical_ip of a NAT rule on the route's out_port datapath. This port is
+ * then set as a tracked_port for the route.
+ * Search is performed in all LS datapaths directly connected to the
+ * route's out_port datapath.
+ * If no suitable tracked_port is found, route is still published, but
+ * without the tracked_port set.*/
+static void
+publish_nat_route(struct hmap *route_map,
+                  const struct parsed_route *route)
+{
+    const struct ovn_datapath *advertised_dp = route->od;
+    const struct ovn_port *ext_nat_port = route->out_port;
+
+    if (!advertised_dp->nbr || !ext_nat_port->od) {
+        return;
+    }
+
+    char *ip_prefix = normalize_v46_prefix(&route->prefix,
+                                           route->plen);
+    char *logical_ip = NULL;
+
+    /* Find NAT rule with external IP that matches the route's
+     * ip_prefix.*/
+    for (int i = 0; i < ext_nat_port->od->nbr->n_nat; i++) {
+        struct nbrec_nat *nat = ext_nat_port->od->nbr->nat[i];
+        if (!strcmp(nat->external_ip, ip_prefix)) {
+            logical_ip = nat->logical_ip;
+            break;
+        }
+    }
+
+    if (!logical_ip) {
+        return;
+    }
+
+    const struct sbrec_port_binding *tracked_pb = NULL;
+    struct ovn_port *tracked_port = find_port_in_connected_ls(ext_nat_port->od,
+                                                              logical_ip);
+    if (tracked_port) {
+        tracked_pb = tracked_port->sb;
+    }
+
+    char *ip_with_mask = xasprintf("%s/%d", ip_prefix, route->plen);
+    ar_alloc_entry(route_map,
+                  route->od->sb,
+                  route->out_port->sb,
+                  ip_with_mask,
+                  tracked_pb);
+    free(ip_prefix);
+}
+
+/* Publish parsed_route as a Advertised_Route record. The main purpose
+ * of this function is to find LSP with IP address that matches the
+ * endpoint IP of a LB on the route's out_port datapath. This port is then
+ * set as a tracked_port for the route.
+ * Search is performed in all LS datapaths directly connected to the
+ * route's out_port datapath.
+ * If no suitable tracked_port is found, route is still published, but
+ * without the tracked_port set.*/
+static void
+publish_lb_route(struct hmap *route_map,
+                 const struct parsed_route *route)
+{
+    const struct ovn_datapath *advertised_dp = route->od;
+    const struct ovn_port *ext_lb_port = route->out_port;
+
+    if (!advertised_dp->nbr || !ext_lb_port->od) {
+        return;
+    }
+
+    char *ip_prefix = normalize_v46_prefix(&route->prefix,
+                                           route->plen);
+
+    for (int i = 0; i < ext_lb_port->od->nbr->n_load_balancer; i++) {
+        struct nbrec_load_balancer *lb =
+            ext_lb_port->od->nbr->load_balancer[i];
+        struct smap lb_vips = SMAP_INITIALIZER(&lb_vips);
+        struct smap_node *node;
+        SMAP_FOR_EACH (node, &lb->vips) {
+            struct ovn_lb_vip *lb_vip = xmalloc(sizeof(*lb_vip));
+            char *error = ovn_lb_vip_init(lb_vip, node->key,
+                                          node->value, false, AF_INET6);
+            if (error) {
+                static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 1);
+                VLOG_WARN_RL(&rl, "Failed to parse LB VIP: %s", error);
+                ovn_lb_vip_destroy(lb_vip);
+                free(error);
+                continue;
+            }
+
+            /* Continue only for LBs whose VIP matches route's ip_prefix.*/
+            if (strcmp(lb_vip->vip_str, ip_prefix)) {
+                ovn_lb_vip_destroy(lb_vip);
+                continue;
+            }
+
+            /* Find LSP that matches at least one endpoint IP of the LB.*/
+            const struct sbrec_port_binding *tracked_pb = NULL;
+            for (int j = 0; j < lb_vip->n_backends; j++) {
+                char *backend = lb_vip->backends[j].ip_str;
+                struct ovn_port *tracked_port =
+                    find_port_in_connected_ls(ext_lb_port->od, backend);
+                if (tracked_port) {
+                    tracked_pb = tracked_port->sb;
+                    break;
+                }
+            }
+
+            char *ip_with_mask = xasprintf("%s/%d", ip_prefix, route->plen);
+            ar_alloc_entry(route_map,
+                           route->od->sb,
+                           route->out_port->sb,
+                           ip_with_mask,
+                           tracked_pb);
+            ovn_lb_vip_destroy(lb_vip);
+            free(ip_prefix);
+        }
+    }
+}
+
 static void
 advertised_route_table_sync(
     struct ovsdb_idl_txn *ovnsb_txn,
@@ -357,6 +539,22 @@ advertised_route_table_sync(
         }
         if (route->source == ROUTE_SOURCE_STATIC &&
                 !route->out_port->dynamic_routing_static) {
+            continue;
+        }
+        if (route->source == ROUTE_SOURCE_NAT) {
+            if (!smap_get_bool(&route->out_port->nbrp->options,
+                               "dynamic-routing-nat", false)) {
+                continue;
+            }
+            publish_nat_route(&sync_routes, route);
+            continue;
+        }
+        if (route->source == ROUTE_SOURCE_LB) {
+            if (!smap_get_bool(&route->out_port->nbrp->options,
+                               "dynamic-routing-lb-vips", false)) {
+                continue;
+            }
+            publish_lb_route(&sync_routes, route);
             continue;
         }
 

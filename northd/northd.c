@@ -11076,8 +11076,111 @@ parsed_routes_add_connected(const struct ovn_datapath *od,
     }
 }
 
+/* Add "parsed_route"s to the "routes" for each IP address in laddrs.*/
+static void
+lport_addrs_to_parsed_routes(const struct ovn_datapath *od,
+                             const struct ovn_port *op,
+                             const struct lport_addresses *laddrs,
+                             enum route_source route_type,
+                             struct hmap *routes,
+                             bool install_lflow)
+{
+    for (int i = 0; i < laddrs->n_ipv4_addrs; i++) {
+        struct ipv4_netaddr *addr = &laddrs->ipv4_addrs[i];
+        struct in6_addr prefix;
+        ip46_parse(addr->network_s, &prefix);
+        parsed_route_add(od, NULL, &prefix, addr->plen,
+                         false, addr->addr_s, op,
+                         0, false,
+                         false, NULL, route_type,
+                         &op->nbrp->header_, routes, install_lflow);
+    }
+    for (int i = 0; i < laddrs->n_ipv6_addrs; i++) {
+        struct ipv6_netaddr *addr = &laddrs->ipv6_addrs[i];
+        parsed_route_add(od, NULL, &addr->addr, addr->plen,
+                         false, addr->addr_s, op,
+                         0, false,
+                         false, NULL, route_type,
+                         &op->nbrp->header_, routes, install_lflow);
+    }
+}
+
+/* Add routes of all NAT external_addresses on the ovn_port "op", to be
+ * advertised by the datapath "od".
+ * If "routeable_only" is true, only NATs with option "add_route=true" will
+ * be considered.
+ * Note that the "op" does not necessarily need to be in the "od" datapath.
+ * Such use-case is for advertising external NAT IPs of LRPs in neighboring
+ * routers and should be paired with routable_only=true.
+ */
+static void
+parsed_routes_add_nat(const struct ovn_datapath *od,
+                      const struct ovn_port *op,
+                      struct hmap *routes,
+                      bool routable_only)
+{
+    if (!op->nbrp || !smap_get_bool(&op->nbrp->options,
+                                    "dynamic-routing-nat", false)) {
+        return;
+    }
+    size_t n_nats = 0;
+    char **nats = NULL;
+    nats = get_nat_addresses(op, &n_nats, routable_only, false, NULL, true);
+
+    for (size_t i = 0; i < n_nats; i++) {
+        struct lport_addresses *laddrs = xzalloc(sizeof *laddrs);
+        int ofs = 0;
+        extract_addresses(nats[i], laddrs, &ofs);
+        lport_addrs_to_parsed_routes(od, op, laddrs, ROUTE_SOURCE_NAT,
+                                     routes, false);
+        destroy_lport_addresses(laddrs);
+        free(nats[i]);
+    }
+    free(nats);
+}
+
+/* Add routes of all LB VIPs on the ovn_port "op", to be advertised by the
+ * datapath "od".
+ * If "routeable_only" is true, only LBs with option "add_route=true" will
+ * be considered.
+ * Note that the "op" does not necessarily need to be in the "od" datapath.
+ * Such use-case is for advertising LB VIPs of LRPs in neighboring routers
+ * and should be paired with routable_only=true.
+ */
+static void
+parsed_routes_add_lb(const struct ovn_datapath *od,
+                     const struct ovn_port *op,
+                     struct hmap *routes,
+                     const struct lr_stateful_record *lr_stateful_rec,
+                     bool routable_only)
+{
+    if (!op->nbrp || !smap_get_bool(&op->nbrp->options,
+                                    "dynamic-routing-lb-vips", false)) {
+        return;
+    }
+
+    if (!lr_stateful_rec) {
+        return;
+    }
+
+    struct ds addresses = DS_EMPTY_INITIALIZER;
+    get_lb_addresses(lr_stateful_rec, &addresses, routable_only);
+
+    struct lport_addresses *laddrs = xzalloc(sizeof *laddrs);
+    extract_ip_addresses(ds_cstr(&addresses), laddrs);
+
+    lport_addrs_to_parsed_routes(od, op, laddrs, ROUTE_SOURCE_LB,
+                                 routes, false);
+
+    destroy_lport_addresses(laddrs);
+    ds_destroy(&addresses);
+
+}
+
 void
-build_parsed_routes(const struct ovn_datapath *od, const struct hmap *lr_ports,
+build_parsed_routes(const struct ovn_datapath *od,
+                    const struct lr_stateful_table *lr_stateful_table,
+                    const struct hmap *lr_ports,
                     const struct hmap *bfd_connections, struct hmap *routes,
                     struct simap *route_tables,
                     struct hmap *bfd_active_connections)
@@ -11097,7 +11200,34 @@ build_parsed_routes(const struct ovn_datapath *od, const struct hmap *lr_ports,
 
     const struct ovn_port *op;
     HMAP_FOR_EACH (op, dp_node, &od->ports) {
+        const struct lr_stateful_record *lr_stateful_rec = NULL;
+        lr_stateful_rec = lr_stateful_table_find_by_index(
+            lr_stateful_table, op->od->index);
+
         parsed_routes_add_connected(od, op, routes);
+        parsed_routes_add_nat(od, op, routes, false);
+        parsed_routes_add_lb(od, op, routes, lr_stateful_rec, false);
+    }
+
+    /* For GW routers we traverse also neighboring LR in search for
+     * LBs and NATs with "add_route" option set to "true". Such NATs/LBs
+     * install logical flows for their external IP addresses to their
+     * neighboring routers, and as such, we can advertise them as routes.
+     * The LRP on the neighboring router needs to have appropriate
+     * "dynamic-routing-{nat,lb-vips}" option set for this to take effect.*/
+    for (size_t i = 0; od->is_gw_router && i < od->n_ls_peers; i++) {
+        for (size_t j = 0; j < od->ls_peers[i]->n_router_ports; j++) {
+            struct ovn_port *router_port;
+            router_port = od->ls_peers[i]->router_ports[j]->peer;
+
+            const struct lr_stateful_record *lr_stateful_rec = NULL;
+            lr_stateful_rec = lr_stateful_table_find_by_index(
+                lr_stateful_table, router_port->od->index);
+
+            parsed_routes_add_nat(od, router_port, routes, true);
+            parsed_routes_add_lb(od, router_port, routes,
+                                 lr_stateful_rec, true);
+        }
     }
 
     HMAP_FOR_EACH_SAFE (pr, key_node, routes) {
@@ -11279,6 +11409,8 @@ route_source_to_offset(enum route_source source)
 {
     switch (source) {
     case ROUTE_SOURCE_CONNECTED:
+    case ROUTE_SOURCE_NAT:
+    case ROUTE_SOURCE_LB:
         return ROUTE_PRIO_OFFSET_CONNECTED;
     case ROUTE_SOURCE_STATIC:
         return ROUTE_PRIO_OFFSET_STATIC;

@@ -61,6 +61,23 @@ Post v24.09.0
      * Add the option "dynamic-routing-ifname" to LRPs. If set only routes
        learned from a linux iterfaces with that name are treated as relevant
        routes for this LRP.
+   - Add the option "dynamic-routing" to Logical Routers. If set to true all
+     static and connected routes attached to the router are shared to the
+     southbound "Route" table for sharing outside of OVN.
+     The routes can furthe be filtered by setting `dynamic-routing-connected`
+     and `dynamic-routing-static` on the LR or LRP. The LRP settings overwrite
+     the LR settings for all routes using this interface as an exit.
+   - Allow Logical Routers to dynamically learn routes from outside the fabric.
+     Routes entered into the "Route" table in the southbound database will be
+     learned by the respective LR. They are included in the route table with
+     a lower priority than static routes.
+   - Add the option "dynamic-routing-connected-as-host-routes" to LRPs. If set
+     to true then connected routes are announced as individual host routes.
+   - Add 'dynamic-routing-lb-vips' LRP option. If set to true, the LRP can be
+     used to advertise host paths to the Load Balancer VIPs associated with the
+     LR.
+   - Add 'dynamic-routing-nat' LRP option. If set to true, the LRP can be used
+     to advertise external NAT IPs associated with it.
 
 OVN v24.09.0 - 13 Sep 2024
 --------------------------

@@ -15134,3 +15134,571 @@ CHECK_NO_CHANGE_AFTER_RECOMPUTE
 AT_CLEANUP
 ])
 
+OVN_FOR_EACH_NORTHD_NO_HV([
+AT_SETUP([dynamic-routing - nat sync to sb IPv4])
+AT_KEYWORDS([dynamic-routing])
+ovn_start
+
+# Start with GW router and a single LRP
+check ovn-nbctl lr-add lr0
+check ovn-nbctl \
+    -- \
+    set Logical_Router lr0 options:dynamic-routing=true \
+                           options:chassis=hv1
+check ovn-nbctl --wait=sb \
+    -- \
+    lrp-add lr0 lr0-sw0 00:00:00:00:ff:01 10.0.0.1/24
+
+check_row_count Advertised_Route 0
+
+datapath=$(ovn-sbctl --bare --columns _uuid list datapath_binding lr0)
+pb=$(ovn-sbctl --bare --columns _uuid list port_binding lr0-sw0)
+
+# Adding LRP dynamic-routing-nat option and NAT rule advertises a route entry
+check ovn-nbctl --wait=sb \
+    -- \
+    lrp-set-options lr0-sw0 dynamic-routing-nat=true \
+    -- \
+    lr-nat-add lr0 dnat_and_snat 172.16.1.10 192.168.1.10
+
+ovn-nbctl list NAT
+ovn-sbctl list Advertised_Route
+ovn-sbctl lflow-list
+
+check_row_count Advertised_Route 1
+AT_CHECK([ovn-sbctl --columns ip_prefix --bare find Advertised_Route \
+datapath=$datapath logical_port=$pb], [0], [dnl
+172.16.1.10/32
+])
+
+# Add LR with distributed LRP connected to GW router through join LS
+check ovn-nbctl \
+    -- \
+    lrp-add lr0 lr0-join 00:00:00:00:ff:02 10.42.0.1/24 \
+    -- \
+    ls-add ls-join \
+    -- \
+    lsp-add ls-join lsp-join-to-lr0 \
+    -- \
+    lsp-set-type lsp-join-to-lr0 router \
+    -- \
+    lsp-set-options lsp-join-to-lr0 router-port=lr0-join \
+    -- \
+    lsp-set-addresses lsp-join-to-lr0 router \
+    -- \
+    lr-add lr-guest0 \
+    -- \
+    lrp-add lr-guest0 lrp-guest0-sw0 00:00:00:00:fe:01 10.51.0.1/24 \
+    -- \
+    lrp-add lr-guest0 lrp-guest0-join 00:00:00:00:fe:02 10.42.0.2/24 \
+    -- \
+    lrp-set-options lrp-guest0-join dynamic-routing-nat=true \
+    -- \
+    lsp-add ls-join lsp-join-to-guest0 \
+    -- \
+    lsp-set-type lsp-join-to-guest0 router \
+    -- \
+    lsp-set-options lsp-join-to-guest0 router-port=lrp-guest0-join \
+    -- \
+    lrp-set-gateway-chassis lrp-guest0-join hv1
+
+pb2=$(ovn-sbctl --bare --columns _uuid list port_binding lrp-guest0-join)
+
+check ovn-nbctl --wait=sb \
+    --add-route lr-nat-add lr-guest0 dnat_and_snat 172.16.2.10 192.168.2.10
+
+check_row_count Advertised_Route 2
+ovn-sbctl list advertised_route
+echo $datapath
+echo $pb
+echo $pb2
+AT_CHECK([ovn-sbctl --columns ip_prefix --bare find Advertised_Route \
+datapath=$datapath logical_port="$pb"], [0], [dnl
+172.16.1.10/32
+])
+AT_CHECK([ovn-sbctl --columns ip_prefix --bare find Advertised_Route \
+datapath=$datapath logical_port=$pb2], [0], [dnl
+172.16.2.10/32
+])
+
+# Add nonlocal LR with distributed LRP connected to GW router through join LS
+check ovn-nbctl \
+    -- \
+    lr-add lr-guest1 \
+    -- \
+    lrp-add lr-guest1 lrp-guest1-sw0 00:00:00:00:fd:01 10.51.1.1/24 \
+    -- \
+    lrp-add lr-guest1 lrp-guest1-join 00:00:00:00:fd:02 10.42.0.3/24 \
+    -- \
+    lrp-set-options lrp-guest1-join dynamic-routing-nat=true \
+    -- \
+    lsp-add ls-join lsp-join-to-guest1 \
+    -- \
+    lsp-set-type lsp-join-to-guest1 router \
+    -- \
+    lsp-set-options lsp-join-to-guest1 router-port=lrp-guest1-join \
+    -- \
+    lrp-set-gateway-chassis lrp-guest1-join nonlocalhv
+
+pb3=$(ovn-sbctl --bare --columns _uuid list port_binding lrp-guest1-join)
+
+check ovn-nbctl --wait=sb \
+    --add-route lr-nat-add lr-guest1 dnat_and_snat 172.16.3.10 192.168.3.10
+check_row_count Advertised_Route 3
+AT_CHECK([ovn-sbctl --columns ip_prefix --bare find Advertised_Route \
+datapath=$datapath logical_port=$pb], [0], [dnl
+172.16.1.10/32
+])
+AT_CHECK([ovn-sbctl --columns ip_prefix --bare find Advertised_Route \
+datapath=$datapath logical_port=$pb2], [0], [dnl
+172.16.2.10/32
+])
+AT_CHECK([ovn-sbctl --columns ip_prefix --bare find Advertised_Route \
+datapath=$datapath logical_port=$pb3], [0], [dnl
+172.16.3.10/32
+])
+
+# removing the option:dynamic-routing removes all routes
+check ovn-nbctl --wait=sb remove Logical_Router lr0 option dynamic-routing
+check_row_count Advertised_Route 0
+
+# and setting it again adds them again
+check ovn-nbctl --wait=sb set Logical_Router lr0 option:dynamic-routing=true
+check_row_count Advertised_Route 3
+
+# removing the lr will remove all routes
+check ovn-nbctl --wait=sb lr-del lr0
+check_row_count Advertised_Route 0
+
+AT_CLEANUP
+])
+
+OVN_FOR_EACH_NORTHD_NO_HV([
+AT_SETUP([dynamic-routing - nat sync to sb IPv6])
+AT_KEYWORDS([dynamic-routing])
+ovn_start
+
+# Start with GW router and a single LRP
+check ovn-nbctl lr-add lr0
+check ovn-nbctl \
+    -- \
+    set Logical_Router lr0 options:dynamic-routing=true \
+                           options:chassis=hv1
+check ovn-nbctl --wait=sb \
+    -- \
+    lrp-add lr0 lr0-sw0 00:00:00:00:ff:01 2001:db0::1/64
+
+check_row_count Advertised_Route 0
+
+datapath=$(ovn-sbctl --bare --columns _uuid list datapath_binding lr0)
+pb=$(ovn-sbctl --bare --columns _uuid list port_binding lr0-sw0)
+
+# Adding LRP dynamic-routing-nat option and NAT rule advertises a route entry
+check ovn-nbctl --wait=sb \
+    -- \
+    lrp-set-options lr0-sw0 dynamic-routing-nat=true \
+    -- \
+    lr-nat-add lr0 dnat_and_snat 2001:db1::10 2001:db2::10
+
+ovn-nbctl list NAT
+ovn-sbctl list Advertised_Route
+ovn-sbctl lflow-list
+
+check_row_count Advertised_Route 1
+AT_CHECK([ovn-sbctl --columns ip_prefix --bare find Advertised_Route \
+datapath=$datapath logical_port=$pb], [0], [dnl
+2001:db1::10/128
+])
+
+# Add LR with distributed LRP connected to GW router through join LS
+check ovn-nbctl \
+    -- \
+    lrp-add lr0 lr0-join 00:00:00:00:ff:02 2001:db42::1/64 \
+    -- \
+    ls-add ls-join \
+    -- \
+    lsp-add ls-join lsp-join-to-lr0 \
+    -- \
+    lsp-set-type lsp-join-to-lr0 router \
+    -- \
+    lsp-set-options lsp-join-to-lr0 router-port=lr0-join \
+    -- \
+    lsp-set-addresses lsp-join-to-lr0 router \
+    -- \
+    lr-add lr-guest0 \
+    -- \
+    lrp-add lr-guest0 lrp-guest0-sw0 00:00:00:00:fe:01 2001:db51::1/64 \
+    -- \
+    lrp-add lr-guest0 lrp-guest0-join 00:00:00:00:fe:02 2001:db42::2/64 \
+    -- \
+    lrp-set-options lrp-guest0-join dynamic-routing-nat=true \
+    -- \
+    lsp-add ls-join lsp-join-to-guest0 \
+    -- \
+    lsp-set-type lsp-join-to-guest0 router \
+    -- \
+    lsp-set-options lsp-join-to-guest0 router-port=lrp-guest0-join \
+    -- \
+    lrp-set-gateway-chassis lrp-guest0-join hv1
+
+pb2=$(ovn-sbctl --bare --columns _uuid list port_binding lrp-guest0-join)
+
+check ovn-nbctl --wait=sb \
+    --add-route lr-nat-add lr-guest0 dnat_and_snat 2001:db3::10 2001:db4::10
+
+check_row_count Advertised_Route 2
+ovn-sbctl list advertised_route
+echo $datapath
+echo $pb
+echo $pb2
+AT_CHECK([ovn-sbctl --columns ip_prefix --bare find Advertised_Route \
+datapath=$datapath logical_port="$pb"], [0], [dnl
+2001:db1::10/128
+])
+AT_CHECK([ovn-sbctl --columns ip_prefix --bare find Advertised_Route \
+datapath=$datapath logical_port=$pb2], [0], [dnl
+2001:db3::10/128
+])
+
+# Add nonlocal LR with distributed LRP connected to GW router through join LS
+check ovn-nbctl \
+    -- \
+    lr-add lr-guest1 \
+    -- \
+    lrp-add lr-guest1 lrp-guest1-sw0 00:00:00:00:fd:01 2001:db52::1/64 \
+    -- \
+    lrp-add lr-guest1 lrp-guest1-join 00:00:00:00:fd:02 2001:db42::3/64 \
+    -- \
+    lrp-set-options lrp-guest1-join dynamic-routing-nat=true \
+    -- \
+    lsp-add ls-join lsp-join-to-guest1 \
+    -- \
+    lsp-set-type lsp-join-to-guest1 router \
+    -- \
+    lsp-set-options lsp-join-to-guest1 router-port=lrp-guest1-join \
+    -- \
+    lrp-set-gateway-chassis lrp-guest1-join nonlocalhv
+
+pb3=$(ovn-sbctl --bare --columns _uuid list port_binding lrp-guest1-join)
+
+check ovn-nbctl --wait=sb \
+    --add-route lr-nat-add lr-guest1 dnat_and_snat 2001:db5::10 2001:db6::10
+check_row_count Advertised_Route 3
+AT_CHECK([ovn-sbctl --columns ip_prefix --bare find Advertised_Route \
+datapath=$datapath logical_port=$pb], [0], [dnl
+2001:db1::10/128
+])
+AT_CHECK([ovn-sbctl --columns ip_prefix --bare find Advertised_Route \
+datapath=$datapath logical_port=$pb2], [0], [dnl
+2001:db3::10/128
+])
+AT_CHECK([ovn-sbctl --columns ip_prefix --bare find Advertised_Route \
+datapath=$datapath logical_port=$pb3], [0], [dnl
+2001:db5::10/128
+])
+
+# removing the option:dynamic-routing removes all routes
+check ovn-nbctl --wait=sb remove Logical_Router lr0 option dynamic-routing
+check_row_count Advertised_Route 0
+
+# and setting it again adds them again
+check ovn-nbctl --wait=sb set Logical_Router lr0 option:dynamic-routing=true
+check_row_count Advertised_Route 3
+
+# removing the lr will remove all routes
+check ovn-nbctl --wait=sb lr-del lr0
+check_row_count Advertised_Route 0
+
+AT_CLEANUP
+])
+
+OVN_FOR_EACH_NORTHD_NO_HV([
+AT_SETUP([dynamic-routing - LB sync to sb IPv4])
+AT_KEYWORDS([dynamic-routing])
+ovn_start
+
+# Start with GW router and a single LRP
+check ovn-nbctl lr-add lr0
+check ovn-nbctl \
+    -- \
+    set Logical_Router lr0 options:dynamic-routing=true \
+                           options:chassis=hv1
+check ovn-nbctl --wait=sb \
+    -- \
+    lrp-add lr0 lr0-sw0 00:00:00:00:ff:01 10.0.0.1/24
+
+check_row_count Advertised_Route 0
+
+datapath=$(ovn-sbctl --bare --columns _uuid list datapath_binding lr0)
+pb=$(ovn-sbctl --bare --columns _uuid list port_binding lr0-sw0)
+
+# Adding LRP dynamic-routing-lb-vips option and LB VIP rule advertises a route entry
+check ovn-nbctl --wait=sb \
+    -- \
+    lrp-set-options lr0-sw0 dynamic-routing-lb-vips=true \
+    -- \
+    lb-add lb0 172.16.1.10:80 192.168.1.10:80,192.168.1.11:80 \
+    -- \
+    lr-lb-add lr0 lb0
+
+ovn-nbctl list Load_Balancer
+ovn-sbctl list Advertised_Route
+ovn-sbctl lflow-list
+
+check_row_count Advertised_Route 1
+AT_CHECK([ovn-sbctl --columns ip_prefix --bare find Advertised_Route \
+datapath=$datapath logical_port=$pb], [0], [dnl
+172.16.1.10/32
+])
+
+# Add LR with distributed LRP connected to GW router through join LS
+check ovn-nbctl \
+    -- \
+    lrp-add lr0 lr0-join 00:00:00:00:ff:02 10.42.0.1/24 \
+    -- \
+    ls-add ls-join \
+    -- \
+    lsp-add ls-join lsp-join-to-lr0 \
+    -- \
+    lsp-set-type lsp-join-to-lr0 router \
+    -- \
+    lsp-set-options lsp-join-to-lr0 router-port=lr0-join \
+    -- \
+    lsp-set-addresses lsp-join-to-lr0 router \
+    -- \
+    lr-add lr-guest0 \
+    -- \
+    lrp-add lr-guest0 lrp-guest0-sw0 00:00:00:00:fe:01 10.51.0.1/24 \
+    -- \
+    lrp-add lr-guest0 lrp-guest0-join 00:00:00:00:fe:02 10.42.0.2/24 \
+    -- \
+    lrp-set-options lrp-guest0-join dynamic-routing-lb-vips=true \
+    -- \
+    lsp-add ls-join lsp-join-to-guest0 \
+    -- \
+    lsp-set-type lsp-join-to-guest0 router \
+    -- \
+    lsp-set-options lsp-join-to-guest0 router-port=lrp-guest0-join \
+    -- \
+    lrp-set-gateway-chassis lrp-guest0-join hv1
+
+pb2=$(ovn-sbctl --bare --columns _uuid list port_binding lrp-guest0-join)
+
+check ovn-nbctl --wait=sb \
+    --add-route lb-add lb1 172.16.2.10:80 192.168.2.10:80,192.168.2.11:80 \
+    -- \
+    lr-lb-add lr-guest0 lb1
+
+check_row_count Advertised_Route 2
+ovn-sbctl list advertised_route
+echo $datapath
+echo $pb
+echo $pb2
+AT_CHECK([ovn-sbctl --columns ip_prefix --bare find Advertised_Route \
+datapath=$datapath logical_port="$pb"], [0], [dnl
+172.16.1.10/32
+])
+AT_CHECK([ovn-sbctl --columns ip_prefix --bare find Advertised_Route \
+datapath=$datapath logical_port=$pb2], [0], [dnl
+172.16.2.10/32
+])
+
+# Add nonlocal LR with distributed LRP connected to GW router through join LS
+check ovn-nbctl \
+    -- \
+    lr-add lr-guest1 \
+    -- \
+    lrp-add lr-guest1 lrp-guest1-sw0 00:00:00:00:fd:01 10.51.1.1/24 \
+    -- \
+    lrp-add lr-guest1 lrp-guest1-join 00:00:00:00:fd:02 10.42.0.3/24 \
+    -- \
+    lrp-set-options lrp-guest1-join dynamic-routing-lb-vips=true \
+    -- \
+    lsp-add ls-join lsp-join-to-guest1 \
+    -- \
+    lsp-set-type lsp-join-to-guest1 router \
+    -- \
+    lsp-set-options lsp-join-to-guest1 router-port=lrp-guest1-join \
+    -- \
+    lrp-set-gateway-chassis lrp-guest1-join nonlocalhv
+
+pb3=$(ovn-sbctl --bare --columns _uuid list port_binding lrp-guest1-join)
+
+check ovn-nbctl --wait=sb \
+    --add-route lb-add lb2 172.16.3.10:80 192.168.3.10:80,192.168.3.11:80 \
+    -- \
+    lr-lb-add lr-guest1 lb2
+check_row_count Advertised_Route 3
+AT_CHECK([ovn-sbctl --columns ip_prefix --bare find Advertised_Route \
+datapath=$datapath logical_port=$pb], [0], [dnl
+172.16.1.10/32
+])
+AT_CHECK([ovn-sbctl --columns ip_prefix --bare find Advertised_Route \
+datapath=$datapath logical_port=$pb2], [0], [dnl
+172.16.2.10/32
+])
+AT_CHECK([ovn-sbctl --columns ip_prefix --bare find Advertised_Route \
+datapath=$datapath logical_port=$pb3], [0], [dnl
+172.16.3.10/32
+])
+
+# removing the option:dynamic-routing removes all routes
+check ovn-nbctl --wait=sb remove Logical_Router lr0 option dynamic-routing
+check_row_count Advertised_Route 0
+
+# and setting it again adds them again
+check ovn-nbctl --wait=sb set Logical_Router lr0 option:dynamic-routing=true
+check_row_count Advertised_Route 3
+
+# removing the lr will remove all routes
+check ovn-nbctl --wait=sb lr-del lr0
+check_row_count Advertised_Route 0
+
+AT_CLEANUP
+])
+
+OVN_FOR_EACH_NORTHD_NO_HV([
+AT_SETUP([dynamic-routing - LB sync to sb IPv6])
+AT_KEYWORDS([dynamic-routing])
+ovn_start
+
+# Start with GW router and a single LRP
+check ovn-nbctl lr-add lr0
+check ovn-nbctl \
+    -- \
+    set Logical_Router lr0 options:dynamic-routing=true \
+                           options:chassis=hv1
+check ovn-nbctl --wait=sb \
+    -- \
+    lrp-add lr0 lr0-sw0 00:00:00:00:ff:01 2001:db0::1/64
+
+check_row_count Advertised_Route 0
+
+datapath=$(ovn-sbctl --bare --columns _uuid list datapath_binding lr0)
+pb=$(ovn-sbctl --bare --columns _uuid list port_binding lr0-sw0)
+
+# Adding LRP dynamic-routing-lb-vips option and LB VIP rule advertises a route entry
+check ovn-nbctl --wait=sb \
+    -- \
+    lrp-set-options lr0-sw0 dynamic-routing-lb-vips=true \
+    -- \
+    lb-add lb0 [[2001:db1::10]]:80 [[2001:db2::10]]:80,[[2001:db2::11]]:80 \
+    -- \
+    lr-lb-add lr0 lb0
+
+ovn-nbctl list Load_Balancer
+ovn-sbctl list Advertised_Route
+ovn-sbctl lflow-list
+
+check_row_count Advertised_Route 1
+AT_CHECK([ovn-sbctl --columns ip_prefix --bare find Advertised_Route \
+datapath=$datapath logical_port=$pb], [0], [dnl
+2001:db1::10/128
+])
+
+# Add LR with distributed LRP connected to GW router through join LS
+check ovn-nbctl \
+    -- \
+    lrp-add lr0 lr0-join 00:00:00:00:ff:02 2001:db42::1/64 \
+    -- \
+    ls-add ls-join \
+    -- \
+    lsp-add ls-join lsp-join-to-lr0 \
+    -- \
+    lsp-set-type lsp-join-to-lr0 router \
+    -- \
+    lsp-set-options lsp-join-to-lr0 router-port=lr0-join \
+    -- \
+    lsp-set-addresses lsp-join-to-lr0 router \
+    -- \
+    lr-add lr-guest0 \
+    -- \
+    lrp-add lr-guest0 lrp-guest0-sw0 00:00:00:00:fe:01 2001:db52::1/64 \
+    -- \
+    lrp-add lr-guest0 lrp-guest0-join 00:00:00:00:fe:02 2001:db42::2/64 \
+    -- \
+    lrp-set-options lrp-guest0-join dynamic-routing-lb-vips=true \
+    -- \
+    lsp-add ls-join lsp-join-to-guest0 \
+    -- \
+    lsp-set-type lsp-join-to-guest0 router \
+    -- \
+    lsp-set-options lsp-join-to-guest0 router-port=lrp-guest0-join \
+    -- \
+    lrp-set-gateway-chassis lrp-guest0-join hv1
+
+pb2=$(ovn-sbctl --bare --columns _uuid list port_binding lrp-guest0-join)
+
+check ovn-nbctl --wait=sb \
+    --add-route lb-add lb1 [[2001:db3::10]]:80 [[2001:db4::10]]:80,[[2001:db4::11]]:80 \
+    -- \
+    lr-lb-add lr-guest0 lb1
+
+check_row_count Advertised_Route 2
+ovn-sbctl list advertised_route
+echo $datapath
+echo $pb
+echo $pb2
+AT_CHECK([ovn-sbctl --columns ip_prefix --bare find Advertised_Route \
+datapath=$datapath logical_port="$pb"], [0], [dnl
+2001:db1::10/128
+])
+AT_CHECK([ovn-sbctl --columns ip_prefix --bare find Advertised_Route \
+datapath=$datapath logical_port=$pb2], [0], [dnl
+2001:db3::10/128
+])
+
+# Add nonlocal LR with distributed LRP connected to GW router through join LS
+check ovn-nbctl \
+    -- \
+    lr-add lr-guest1 \
+    -- \
+    lrp-add lr-guest1 lrp-guest1-sw0 00:00:00:00:fd:01 2001:db2::1/64 \
+    -- \
+    lrp-add lr-guest1 lrp-guest1-join 00:00:00:00:fd:02 2001:db42::3/64 \
+    -- \
+    lrp-set-options lrp-guest1-join dynamic-routing-lb-vips=true \
+    -- \
+    lsp-add ls-join lsp-join-to-guest1 \
+    -- \
+    lsp-set-type lsp-join-to-guest1 router \
+    -- \
+    lsp-set-options lsp-join-to-guest1 router-port=lrp-guest1-join \
+    -- \
+    lrp-set-gateway-chassis lrp-guest1-join nonlocalhv
+
+pb3=$(ovn-sbctl --bare --columns _uuid list port_binding lrp-guest1-join)
+
+check ovn-nbctl --wait=sb \
+    --add-route lb-add lb2 [[2001:db5::10]]:80 [[2001:db4::10]]:80,[[2001:db4::11]]:80 \
+    -- \
+    lr-lb-add lr-guest1 lb2
+check_row_count Advertised_Route 3
+AT_CHECK([ovn-sbctl --columns ip_prefix --bare find Advertised_Route \
+datapath=$datapath logical_port=$pb], [0], [dnl
+2001:db1::10/128
+])
+AT_CHECK([ovn-sbctl --columns ip_prefix --bare find Advertised_Route \
+datapath=$datapath logical_port=$pb2], [0], [dnl
+2001:db3::10/128
+])
+AT_CHECK([ovn-sbctl --columns ip_prefix --bare find Advertised_Route \
+datapath=$datapath logical_port=$pb3], [0], [dnl
+2001:db5::10/128
+])
+
+# removing the option:dynamic-routing removes all routes
+check ovn-nbctl --wait=sb remove Logical_Router lr0 option dynamic-routing
+check_row_count Advertised_Route 0
+
+# and setting it again adds them again
+check ovn-nbctl --wait=sb set Logical_Router lr0 option:dynamic-routing=true
+check_row_count Advertised_Route 3
+
+# removing the lr will remove all routes
+check ovn-nbctl --wait=sb lr-del lr0
+check_row_count Advertised_Route 0
+
+AT_CLEANUP
+])
+

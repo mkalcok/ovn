@@ -316,6 +316,8 @@ en_routes_run(struct engine_node *node, void *data)
 {
     struct northd_data *northd_data = engine_get_input_data("northd", node);
     struct bfd_data *bfd_data = engine_get_input_data("bfd", node);
+    struct ed_type_lr_stateful *lr_stateful_data =
+        engine_get_input_data("lr_stateful", node);
     struct routes_data *routes_data = data;
 
     routes_destroy(data);
@@ -330,7 +332,8 @@ en_routes_run(struct engine_node *node, void *data)
                                route_table_name);
         }
 
-        build_parsed_routes(od, &northd_data->lr_ports,
+        build_parsed_routes(od, &lr_stateful_data->table,
+                            &northd_data->lr_ports,
                             &bfd_data->bfd_connections,
                             &routes_data->parsed_routes,
                             &routes_data->route_tables,
