@@ -17,20 +17,21 @@
 #include <stdbool.h>
 
 #include "openvswitch/compiler.h"
-#include "route-exchange.h"
+#include "route-table-notify.h"
+
+bool
+route_table_notify_run(void)
+{
+    return false;
+}
 
 void
-route_exchange_run(struct route_exchange_ctx_in *r_ctx_in OVS_UNUSED,
-                   struct route_exchange_ctx_out *r_ctx_out OVS_UNUSED)
+route_table_notify_wait(void)
 {
 }
 
 void
-route_exchange_cleanup(void)
+route_table_notify_update_watches(struct hmap *route_table_watches OVS_UNUSED)
 {
 }
 
-void
-route_exchange_destroy(void)
-{
-}
