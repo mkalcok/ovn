@@ -19,6 +19,7 @@
 #include <netinet/in.h>
 #include "openvswitch/hmap.h"
 #include "sset.h"
+#include "smap.h"
 
 struct hmap;
 struct ovsdb_idl_index;
@@ -51,8 +52,9 @@ struct advertise_datapath_entry {
     bool use_netns;
     struct hmap routes;
     /* the name of the port bindings locally bound for this datapath and
-     * running route exchange logic. */
-    struct sset bound_ports;
+     * running route exchange logic.
+     * The key is the port name and the value is the ifname if set. */
+    struct smap bound_ports;
 };
 
 struct advertise_route_entry {
