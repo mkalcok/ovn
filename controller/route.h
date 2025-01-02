@@ -39,6 +39,13 @@ struct route_ctx_in {
 
 struct route_ctx_out {
     struct hmap *tracked_re_datapaths;
+
+    /* Contains the tracked_ports that in the last run where bound locally */
+    struct sset *tracked_ports_local;
+
+    /* Contains the tracked_ports that in the last run where bound not local */
+    struct sset *tracked_ports_remote;
+
     /* Contains struct advertise_datapath_entry */
     struct hmap *announce_routes;
 };
@@ -61,11 +68,17 @@ struct advertise_route_entry {
     struct hmap_node node;
     struct in6_addr addr;
     unsigned int plen;
+    unsigned int priority;
     /* used by the route-exchange module to determine if the route is
      * already installed */
     bool installed;
 };
 
+const struct sbrec_port_binding *find_route_exchange_pb(
+    struct ovsdb_idl_index *sbrec_port_binding_by_name,
+    const struct sbrec_chassis *chassis,
+    const struct sset *active_tunnels,
+    const struct sbrec_port_binding *pb);
 bool route_exchange_relevant_port(const struct sbrec_port_binding *pb);
 uint32_t advertise_route_hash(const struct in6_addr *dst, unsigned int plen);
 void route_run(struct route_ctx_in *,
