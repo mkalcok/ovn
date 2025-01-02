@@ -305,6 +305,7 @@ tests_ovstest_LDADD = $(OVS_LIBDIR)/daemon.lo \
 	controller/ovsport.$(OBJEXT) \
 	controller/patch.$(OBJEXT) \
 	controller/vif-plug.$(OBJEXT) \
+	controller/route.$(OBJEXT) \
 	northd/ipam.$(OBJEXT)
 
 # Python tests.
