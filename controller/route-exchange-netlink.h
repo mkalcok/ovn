@@ -50,4 +50,6 @@ void re_nl_sync_routes(uint32_t table_id,
                        const struct hmap *host_routes,
                        struct hmap *learned_routes);
 
+void re_nl_cleanup_routes(uint32_t table_id);
+
 #endif /* route-exchange-netlink.h */
