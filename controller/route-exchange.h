@@ -18,6 +18,11 @@
 #include <stdbool.h>
 
 struct route_exchange_ctx_in {
+    /* We need the idl to check if a table exists. */
+    struct ovsdb_idl *ovnsb_idl;
+    struct ovsdb_idl_txn *ovnsb_idl_txn;
+    struct ovsdb_idl_index *sbrec_learned_route_by_datapath;
+    struct ovsdb_idl_index *sbrec_port_binding_by_name;
     /* Contains struct advertise_datapath_entry */
     struct hmap *announce_routes;
 };

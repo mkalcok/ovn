@@ -15047,6 +15047,20 @@ blackhole 192.0.2.3 proto 84
 blackhole 192.0.2.10 proto 84
 blackhole 198.51.100.0/24 proto 84])
 
+# now we test route learning
+check_row_count Learned_Route 0
+check ip route add 233.252.0.0/24 via 192.168.10.10 dev lo onlink vrf ovnvrf1337
+# for now we trigger a recompute as route watching is not yet implemented
+check ovn-appctl -t ovn-controller inc-engine/recompute
+check ovn-nbctl --wait=hv sync
+check_row_count Learned_Route 1
+lp=$(ovn-sbctl --bare --columns _uuid list port_binding internet-phys)
+AT_CHECK_UNQUOTED([ovn-sbctl --columns ip_prefix,nexthop,logical_port --bare find Learned_Route], [0], [dnl
+233.252.0.0/24
+192.168.10.10
+$lp
+])
+
 OVS_APP_EXIT_AND_WAIT([ovn-controller])
 
 as ovn-sb
@@ -15250,6 +15264,20 @@ blackhole 192.0.2.2 proto 84
 blackhole 192.0.2.3 proto 84
 blackhole 192.0.2.10 proto 84
 blackhole 198.51.100.0/24 proto 84])
+
+# now we test route learning
+check_row_count Learned_Route 0
+check ip route add 233.252.0.0/24 via 192.168.10.10 dev lo onlink vrf ovnvrf1337
+# for now we trigger a recompute as route watching is not yet implemented
+check ovn-appctl -t ovn-controller inc-engine/recompute
+check ovn-nbctl --wait=hv sync
+check_row_count Learned_Route 2
+lp=$(ovn-sbctl --bare --columns _uuid list port_binding internet-phys)
+AT_CHECK_UNQUOTED([ovn-sbctl --columns ip_prefix,nexthop,logical_port --bare find Learned_Route logical_port=$lp], [0], [dnl
+233.252.0.0/24
+192.168.10.10
+$lp
+])
 
 as ovn-sb
 OVS_APP_EXIT_AND_WAIT([ovsdb-server])
