@@ -4840,6 +4840,13 @@ struct ed_type_route {
     /* Contains struct tracked_datapath entries for local datapaths subject to
      * route exchange. */
     struct hmap tracked_route_datapaths;
+
+    /* Contains the tracked_ports that in the last run where bound locally */
+    struct sset tracked_ports_local;
+
+    /* Contains the tracked_ports that in the last run where bound not local */
+    struct sset tracked_ports_remote;
+
     /* Contains struct advertise_datapath_entry */
     struct hmap announce_routes;
 };
@@ -4888,6 +4895,8 @@ en_route_run(struct engine_node *node, void *data)
 
     struct route_ctx_out r_ctx_out = {
         .tracked_re_datapaths = &re_data->tracked_route_datapaths,
+        .tracked_ports_local = &re_data->tracked_ports_local,
+        .tracked_ports_remote = &re_data->tracked_ports_remote,
         .announce_routes = &re_data->announce_routes,
     };
 
@@ -4904,6 +4913,8 @@ en_route_init(struct engine_node *node OVS_UNUSED,
     struct ed_type_route *data = xzalloc(sizeof *data);
 
     hmap_init(&data->tracked_route_datapaths);
+    sset_init(&data->tracked_ports_local);
+    sset_init(&data->tracked_ports_remote);
     hmap_init(&data->announce_routes);
 
     return data;
@@ -4915,6 +4926,8 @@ en_route_cleanup(void *data)
     struct ed_type_route *re_data = data;
 
     tracked_datapaths_destroy(&re_data->tracked_route_datapaths);
+    sset_destroy(&re_data->tracked_ports_local);
+    sset_destroy(&re_data->tracked_ports_remote);
     route_cleanup(&re_data->announce_routes);
     hmap_destroy(&re_data->announce_routes);
 }
@@ -4962,6 +4975,26 @@ route_sb_port_binding_data_handler(struct engine_node *node, void *data)
     const struct sbrec_port_binding_table *pb_table =
         EN_OVSDB_GET(engine_get_input("SB_port_binding", node));
 
+    const struct ovsrec_open_vswitch_table *ovs_table =
+        EN_OVSDB_GET(engine_get_input("OVS_open_vswitch", node));
+    const char *chassis_id = get_ovs_chassis_id(ovs_table);
+    ovs_assert(chassis_id);
+
+    struct ovsdb_idl_index *sbrec_chassis_by_name =
+        engine_ovsdb_node_get_index(
+                engine_get_input("SB_chassis", node),
+                "name");
+    const struct sbrec_chassis *chassis
+        = chassis_lookup_by_name(sbrec_chassis_by_name, chassis_id);
+    ovs_assert(chassis);
+
+    struct ovsdb_idl_index *sbrec_port_binding_by_name =
+        engine_ovsdb_node_get_index(
+                engine_get_input("SB_port_binding", node),
+                "name");
+    struct ed_type_runtime_data *rt_data =
+        engine_get_input_data("runtime_data", node);
+
     const struct sbrec_port_binding *sbrec_pb;
     SBREC_PORT_BINDING_TABLE_FOR_EACH_TRACKED (sbrec_pb, pb_table) {
         struct tracked_datapath *re_t_dp =
@@ -4977,6 +5010,24 @@ route_sb_port_binding_data_handler(struct engine_node *node, void *data)
             /* Until we get I-P support for route exchange we need to
              * request recompute. */
             return false;
+        }
+
+        if (sset_contains(&re_data->tracked_ports_local,
+                          sbrec_pb->logical_port)) {
+            if (!find_route_exchange_pb(sbrec_port_binding_by_name, chassis,
+                                        &rt_data->active_tunnels, sbrec_pb)) {
+                /* The port was previously local but now it no longer is. */
+                return false;
+            }
+        }
+
+        if (sset_contains(&re_data->tracked_ports_remote,
+                          sbrec_pb->logical_port)) {
+            if (find_route_exchange_pb(sbrec_port_binding_by_name, chassis,
+                                       &rt_data->active_tunnels, sbrec_pb)) {
+                /* The port was previously remote but now we bound it. */
+                return false;
+            }
         }
 
     }
