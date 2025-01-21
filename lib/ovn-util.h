@@ -488,4 +488,6 @@ void ovn_exit_args_finish(struct ovn_exit_args *exit_args);
 bool ovn_update_swconn_at(struct rconn *swconn, const char *target,
                           int probe_interval, const char *where);
 
+bool prefix_is_link_local(const struct in6_addr *prefix, unsigned int plen);
+
 #endif /* OVN_UTIL_H */
