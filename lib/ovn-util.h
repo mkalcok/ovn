@@ -491,4 +491,6 @@ const struct sbrec_port_binding *lport_lookup_by_name(
     struct ovsdb_idl_index *sbrec_port_binding_by_name,
     const char *name);
 
+bool prefix_is_link_local(const struct in6_addr *prefix, unsigned int plen);
+
 #endif /* OVN_UTIL_H */

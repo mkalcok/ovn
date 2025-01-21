@@ -38,6 +38,10 @@ Post v24.09.0
    - Improved handling of IPv6 traffic by enabling address prefix tracking
      in OVS for both IPv4 and IPv6 addresses, whenever possible, reducing
      the amount of IPv6 datapath flows.
+   - Dynamic Routing:
+     * Add the option "dynamic-routing" to Logical Routers. If set to true all
+       static and connected routes attached to the router are shared to the
+       southbound "Route" table for sharing outside of OVN.
 
 OVN v24.09.0 - 13 Sep 2024
 --------------------------
