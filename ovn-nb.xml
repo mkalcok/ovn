@@ -3750,6 +3750,33 @@ or
         key="dynamic-routing-static" table="Logical_Router_Port"/> will be
         used.
       </column>
+      <column name="options" key="dynamic-routing-connected-as-host-routes"
+              type='{"type": "boolean"}'>
+        Only relevant if <ref column="options" key="dynamic-routing"
+        table="Logical_Router"/> on the respective Logical_Router is set
+        to <code>true</code> and also
+        <ref column="options" key="dynamic-routing-connected"/> is enabled on
+        the LR or LRP.
+
+        If set to true the prefix connected to the LRP is not advertised as a
+        whole. Rather each individual IP address that is actually in use inside
+        this prefix is announced as a host route. Default is false.
+
+        This can be used to:
+        <ul>
+          <li>
+            allow the fabric outside of OVN to drop traffic towards IP
+            addresses that are not actually used. This traffic would otherwise
+            hit this LR and then be dropped.
+          </li>
+
+          <li>
+            If this LR has multiple LRPs connected to the fabric on different
+            chassis: allows the fabric outside of OVN to steer packets to the
+            chassis which already hosts this backing ip address.
+          </li>
+        </ul>
+      </column>
     </group>
 
     <group title="Attachment">
