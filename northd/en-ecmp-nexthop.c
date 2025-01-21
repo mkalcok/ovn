@@ -96,7 +96,15 @@ build_ecmp_nexthop_table(
             continue;
         }
 
-        const struct nbrec_logical_router_static_route *r = pr->route;
+        /* This route has ecmp-symmetric-reply configured, it must be a
+         * static route. */
+        ovs_assert(pr->source == ROUTE_SOURCE_STATIC);
+
+        const struct nbrec_logical_router_static_route *r =
+            CONTAINER_OF(pr->source_hint,
+                         const struct nbrec_logical_router_static_route,
+                         header_);
+
         struct ecmp_nexthop_data *e = ecmp_nexthop_find_entry(
                 r->nexthop, pr->out_port->sb, &sb_nexthops_map);
         if (!e) {
