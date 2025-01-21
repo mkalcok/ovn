@@ -28,6 +28,10 @@ Post v24.09.0
        this option was not set).  TLS ciphersuites for TLSv1.3 and later can
        be configured via --ssl-ciphersuites (--ssl-ciphers only applies to
        TLSv1.2 and earlier).
+   - Dynamic Routing:
+     * Add the option "dynamic-routing" to Logical Routers. If set to true all
+       static and connected routes attached to the router are shared to the
+       southbound "Route" table for sharing outside of OVN.
 
 OVN v24.09.0 - 13 Sep 2024
 --------------------------
