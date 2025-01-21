@@ -2960,13 +2960,47 @@ or
         If set to <code>true</code> then this <ref table="Logical_Router"/>
         can participate in dynamic routing with components outside of OVN.
 
-        It will synchronize all routes to the soutbound
-        <ref table="Route" db="OVN_SB"/> table that are relevant for the
-        router. This includes:
-        * all "connected" routes implicitly created by networks associated with
-          this Logical Router
-        * all <ref table="Logical_Router_Static_Route"/> that are applied to
-          this Logical Router
+        Users will need to use the following settings to opt into individual
+        route types that should be advertised. See:
+        <ul>
+        <li><ref column="options" key="dynamic-routing-connected"
+                 table="Logical_Router"/></li>
+        <li><ref column="options" key="dynamic-routing-static"
+                 table="Logical_Router"/></li>
+        <li><ref column="options" key="dynamic-routing-connected"
+                 table="Logical_Router_Port"/></li>
+        <li><ref column="options" key="dynamic-routing-static"
+                 table="Logical_Router_Port"/></li>
+        </ul>
+      </column>
+
+      <column name="options" key="dynamic-routing-connected"
+              type='{"type": "boolean"}'>
+        Only relevant if <ref column="options" key="dynamic-routing"
+        table="Logical_Router"/> is set to <code>true</code>.
+
+        If this is <code>true</code> as well then northd will synchronize all
+        "connected" routes to the southbound <ref table="Route" db="OVN_SB"/>
+        table. "Connected" here means routes implicitly created by networks
+        associated with the LRPs.
+
+        This value can be overwritten on a per LRP basis using
+        <ref column="options" key="dynamic-routing-connected"
+             table="Logical_Router_Port"/>.
+      </column>
+
+      <column name="options" key="dynamic-routing-static"
+              type='{"type": "boolean"}'>
+        Only relevant if <ref column="options" key="dynamic-routing"
+        table="Logical_Router"/> is set to <code>true</code>.
+
+        If this is <code>true</code> as well then northd will synchronize all
+        <ref table="Logical_Router_Static_Route"/> to the southbound
+        <ref table="Route" db="OVN_SB"/> table.
+
+        This value can be overwritten on a per LRP basis using
+        <ref column="options" key="dynamic-routing-static"
+             table="Logical_Router_Port"/>.
       </column>
     </group>
 
@@ -3692,6 +3726,38 @@ or
           <ref db="OVN_IC_Southbound"/> database, will be filtered and not
           learned by the <code>ovn-ic</code> daemon.
         </p>
+      </column>
+
+      <column name="options" key="dynamic-routing-connected"
+              type='{"type": "boolean"}'>
+        Only relevant if <ref column="options" key="dynamic-routing"
+        table="Logical_Router"/> on the respective Logical_Router is set
+        to <code>true</code>.
+
+        If this is <code>true</code> as well then northd will synchronize all
+        "connected" routes associated with this LRP to the southbound
+        <ref table="Route" db="OVN_SB"/> table. "Connected" here means routes
+        implicitly created by networks associated with this LRP.
+
+        If not set the value from <ref column="options"
+        key="dynamic-routing-connected" table="Logical_Router_Port"/> will be
+        used.
+      </column>
+
+      <column name="options" key="dynamic-routing-static"
+              type='{"type": "boolean"}'>
+        Only relevant if <ref column="options" key="dynamic-routing"
+        table="Logical_Router"/> on the respective Logical_Router is set
+        to <code>true</code>.
+
+        If this is <code>true</code> as well then northd will synchronize all
+        <ref table="Logical_Router_Static_Route"/> to the southbound
+        <ref table="Route" db="OVN_SB"/> table that use this LRP to forward
+        traffic on.
+
+        If not set the value from <ref column="options"
+        key="dynamic-routing-static" table="Logical_Router_Port"/> will be
+        used.
       </column>
     </group>
 
