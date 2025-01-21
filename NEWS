@@ -43,6 +43,14 @@ Post v24.09.0
      * Add the option "dynamic-routing-connected-as-host-routes" to LRPs. If
        set to true then connected routes are announced as individual host
        routes.
+     * Add the option "dynamic-routing-maintain-vrf" to LRPs. If set the
+       ovn-controller will create a vrf named "ovnvrf" + datapath id that
+       includes all advertised and learned routes.
+       The vrf name can be overwritten with the "dynamic-routing-vrf-name"
+       setting.
+     * Add the option "dynamic-routing-ifname" to LRPs. If set only routes
+       learned from a linux iterfaces with that name are treated as relevant
+       routes for this LRP.
 
 OVN v24.09.0 - 13 Sep 2024
 --------------------------
