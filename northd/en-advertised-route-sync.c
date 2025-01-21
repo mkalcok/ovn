@@ -16,6 +16,7 @@
 
 #include <config.h>
 
+#include "smap.h"
 #include "stopwatch.h"
 #include "northd.h"
 
@@ -148,8 +149,15 @@ advertised_route_table_sync(
         if (prefix_is_link_local(&route->prefix, route->plen)) {
             continue;
         }
-        if (!smap_get_bool(&route->od->nbr->options, "dynamic-routing",
-                           false)) {
+        if (!route->od->dynamic_routing) {
+            continue;
+        }
+        if (route->source == ROUTE_SOURCE_CONNECTED &&
+                !route->out_port->dynamic_routing_connected) {
+            continue;
+        }
+        if (route->source == ROUTE_SOURCE_STATIC &&
+                !route->out_port->dynamic_routing_static) {
             continue;
         }
 

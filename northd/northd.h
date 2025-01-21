@@ -369,6 +369,10 @@ struct ovn_datapath {
     bool redirect_bridged;
     /* nbr has the option "dynamic-routing" set to true. */
     bool dynamic_routing;
+    /* nbr has the option "dynamic-routing-connected" set to true. */
+    bool dynamic_routing_connected;
+    /* nbr has the option "dynamic-routing-static" set to true. */
+    bool dynamic_routing_static;
 
     struct ovn_port **localnet_ports;
     size_t n_localnet_ports;
@@ -623,6 +627,13 @@ struct ovn_port {
 
     struct lport_addresses lrp_networks;
     bool prefix_delegation; /* True if IPv6 prefix delegation enabled. */
+
+    /* nbrp has the option "dynamic-routing-connected" set to true.
+     * If it is unset it will be initialized based on the nbr option. */
+    bool dynamic_routing_connected;
+    /* nbrp has the option "dynamic-routing-static" set to true.
+     * If it is unset it will be initialized based on the nbr option. */
+    bool dynamic_routing_static;
 
     /* Logical port multicast data. */
     struct mcast_port_info mcast_info;
