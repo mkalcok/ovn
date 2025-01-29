@@ -143,6 +143,21 @@ route_run(struct route_ctx_in *r_ctx_in,
             char *ifname = nullable_xstrdup(
                                     smap_get(&repb->options,
                                              "dynamic-routing-ifname"));
+
+            const char *vrf_name = smap_get(&repb->options,
+                                      "dynamic-routing-vrf-name");
+            if (vrf_name && strlen(vrf_name) >= sizeof ad->vrf_name) {
+                VLOG_WARN("Ignoring vrf name %s, since it is too long",
+                          vrf_name);
+                vrf_name = NULL;
+            }
+            if (vrf_name) {
+                memcpy(ad->vrf_name, vrf_name, strlen(vrf_name) + 1);
+            } else {
+                snprintf(ad->vrf_name, sizeof ad->vrf_name, "ovnvrf%"PRIi64,
+                         ad->db->tunnel_key);
+            }
+
             smap_add_nocopy(&ad->bound_ports,
                             xstrdup(local_peer->logical_port), ifname);
         }
