@@ -19,6 +19,8 @@
 #define ROUTE_EXCHANGE_NETLINK_H 1
 
 #include <stdint.h>
+#include "openvswitch/list.h"
+#include <netinet/in.h>
 
 /* This value is arbitrary but currently unused.
  * See https://github.com/iproute2/iproute2/blob/main/etc/iproute2/rt_protos */
@@ -26,6 +28,14 @@
 
 struct in6_addr;
 struct hmap;
+
+struct re_nl_received_route_node {
+    struct ovs_list list_node;
+    const struct sbrec_datapath_binding *db;
+    struct in6_addr addr;
+    unsigned int plen;
+    struct in6_addr nexthop;
+};
 
 int re_nl_create_vrf(const char *ifname, uint32_t table_id);
 int re_nl_delete_vrf(const char *ifname);
@@ -37,6 +47,9 @@ int re_nl_delete_route(uint32_t table_id, const struct in6_addr *dst,
 
 void re_nl_dump(uint32_t table_id);
 
-void re_nl_sync_routes(uint32_t table_id, const struct hmap *routes);
+void re_nl_learned_routes_destroy(struct ovs_list *learned_routes);
+void re_nl_sync_routes(uint32_t table_id, const struct hmap *routes,
+                       struct ovs_list *learned_routes,
+                       const struct sbrec_datapath_binding *db);
 
 #endif /* route-exchange-netlink.h */
