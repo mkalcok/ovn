@@ -21,6 +21,7 @@
 #include <stdint.h>
 #include "openvswitch/list.h"
 #include <netinet/in.h>
+#include <net/if.h>
 
 /* This value is arbitrary but currently unused.
  * See https://github.com/iproute2/iproute2/blob/main/etc/iproute2/rt_protos */
@@ -35,6 +36,8 @@ struct re_nl_received_route_node {
     struct in6_addr addr;
     unsigned int plen;
     struct in6_addr nexthop;
+    /* Adding 1 to this to be sure we actually have a terminating '\0' */
+    char ifname[IFNAMSIZ + 1];
 };
 
 int re_nl_create_vrf(const char *ifname, uint32_t table_id);

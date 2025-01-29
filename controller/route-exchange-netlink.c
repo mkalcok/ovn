@@ -237,6 +237,7 @@ handle_route_msg(const struct route_table_msg *msg, void *data)
             rr->addr = rd->rta_dst;
             rr->plen = rd->rtm_dst_len;
             rr->nexthop = nexthop->addr;
+            memcpy(rr->ifname, nexthop->ifname, IFNAMSIZ);
         }
         return;
     }

@@ -87,7 +87,7 @@ advertise_datapath_cleanup(struct advertise_datapath_entry *ad)
         free(ar);
     }
     hmap_destroy(&ad->routes);
-    sset_destroy(&ad->bound_ports);
+    smap_destroy(&ad->bound_ports);
     free(ad);
 }
 
@@ -108,8 +108,8 @@ void
 route_run(struct route_ctx_in *r_ctx_in,
           struct route_ctx_out *r_ctx_out)
 {
-    struct advertise_datapath_entry *ad;
     const struct local_datapath *ld;
+    struct advertise_datapath_entry *ad;
 
     HMAP_FOR_EACH (ld, hmap_node, r_ctx_in->local_datapaths) {
         if (!ld->n_peer_ports || ld->is_switch) {
@@ -119,7 +119,7 @@ route_run(struct route_ctx_in *r_ctx_in,
         ad = xzalloc(sizeof(*ad));
         ad->db = ld->datapath;
         hmap_init(&ad->routes);
-        sset_init(&ad->bound_ports);
+        smap_init(&ad->bound_ports);
 
         /* This is a LR datapath, find LRPs with route exchange options
          * that are bound locally. */
@@ -137,10 +137,14 @@ route_run(struct route_ctx_in *r_ctx_in,
 
             ad->maintain_vrf |= smap_get_bool(
                 &repb->options, "dynamic-routing-maintain-vrf", false);
-            sset_add(&ad->bound_ports, local_peer->logical_port);
+            char *ifname = nullable_xstrdup(
+                                    smap_get(&repb->options,
+                                             "dynamic-routing-ifname"));
+            smap_add_nocopy(&ad->bound_ports,
+                            xstrdup(local_peer->logical_port), ifname);
         }
 
-        if (sset_is_empty(&ad->bound_ports)) {
+        if (smap_is_empty(&ad->bound_ports)) {
             advertise_datapath_cleanup(ad);
             continue;
         }
