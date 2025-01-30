@@ -15462,7 +15462,7 @@ check ovn-nbctl lrp-add R1 rp-sw0 00:00:01:01:02:03 192.168.1.1/24
 check ovn-nbctl -- lrp-add R1 rp-public 00:00:02:01:02:03 172.16.1.1/24 \
                 -- lrp-set-options rp-public \
                        maintain-vrf=true \
-                       redistribute-lb-vips=true
+                       dynamic-routing-lb-vips=true
 
 check ovn-nbctl set logical_router R1 options:chassis=hv1
 
@@ -15556,7 +15556,7 @@ check ovn-nbctl lrp-add R1 rp-sw0 00:00:01:01:02:03 2001:db8:100::1/64
 check ovn-nbctl -- lrp-add R1 rp-public 00:00:02:01:02:03 2001:db8:1001::1/64 \
                 -- lrp-set-options rp-public \
                        maintain-vrf=true \
-                       redistribute-lb-vips=true
+                       dynamic-routing-lb-vips=true
 
 check ovn-nbctl set logical_router R1 options:chassis=hv1
 
@@ -15650,7 +15650,7 @@ check ovn-nbctl lrp-add R1 rp-sw0 00:00:01:01:02:03 192.168.1.1/24
 check ovn-nbctl -- lrp-add R1 rp-public 00:00:02:01:02:03 172.16.1.1/24 \
                 -- lrp-set-options rp-public \
                        maintain-vrf=true \
-                       redistribute-nat=true
+                       dynamic-routing-nat=true
 
 check ovn-nbctl set logical_router R1 options:chassis=hv1
 
@@ -15688,7 +15688,7 @@ AT_CHECK([ip route show table 1002 | grep -q 172.16.1.11])
 OVS_APP_EXIT_AND_WAIT([ovn-controller])
 
 # Ensure system resources are cleaned up
-AT_CHECK([ip link | grep -q ovnvrf1000:.*UP], [1])
+AT_CHECK([ip link | grep -q ovnvrf1002:.*UP], [1])
 AT_CHECK([test `ip route show table 1002 | wc -l` -eq 1], [1])
 
 as ovn-sb
@@ -15745,7 +15745,7 @@ check ovn-nbctl lrp-add R1 rp-sw0 00:00:01:01:02:03 2001:db8:100::1/64
 check ovn-nbctl -- lrp-add R1 rp-public 00:00:02:01:02:03 2001:db8:1003::1/64 \
                 -- lrp-set-options rp-public \
                        maintain-vrf=true \
-                       redistribute-nat=true
+                       dynamic-routing-nat=true
 
 check ovn-nbctl set logical_router R1 options:chassis=hv1
 

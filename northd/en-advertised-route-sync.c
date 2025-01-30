@@ -423,12 +423,12 @@ advertised_route_table_sync(
         }
         if (route->source == ROUTE_SOURCE_NAT &&
                 !smap_get_bool(&route->out_port->nbrp->options,
-                               "redistribute-nat", false)) {
+                               "dynamic-routing-nat", false)) {
                 continue;
         }
         if (route->source == ROUTE_SOURCE_LB &&
                 !smap_get_bool(&route->out_port->nbrp->options,
-                               "redistribute-lb-vips", false)) {
+                               "dynamic-routing-lb-vips", false)) {
                 continue;
         }
 

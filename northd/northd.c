@@ -11390,7 +11390,7 @@ parsed_routes_add_nat(const struct ovn_datapath *od,
                       struct hmap *routes)
 {
     if (!op->nbrp || !smap_get_bool(&op->nbrp->options,
-                                    "redistribute-nat", false)) {
+                                    "dynamic-routing-nat", false)) {
         return;
     }
 
@@ -11433,7 +11433,7 @@ parsed_routes_add_lb(const struct ovn_datapath *od,
                      struct hmap *routes)
 {
     if (!op->nbrp || !smap_get_bool(&op->nbrp->options,
-                                    "redistribute-lb-vips", false)) {
+                                    "dynamic-routing-lb-vips", false)) {
         return;
     }
 
