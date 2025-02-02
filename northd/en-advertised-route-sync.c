@@ -363,6 +363,93 @@ publish_host_routes(struct ovsdb_idl_txn *ovnsb_txn,
     }
 }
 
+
+static void
+publish_nat_route(struct ovsdb_idl_txn *ovnsb_txn,
+                  struct hmap *route_map,
+                  const struct parsed_route *route)
+{
+    const struct ovn_datapath *advertised_dp = route->od;
+    const struct ovn_port *ext_nat_port = route->out_port;
+
+    if (!advertised_dp->nbr || !ext_nat_port->od) {
+        return;
+    }
+
+    char *ip_prefix = normalize_v46_prefix(&route->prefix,
+                                           route->plen);
+    const char *logical_ip = NULL;
+
+    for (int i = 0; i < ext_nat_port->od->nbr->n_nat; i++) {
+        struct nbrec_nat *nat = ext_nat_port->od->nbr->nat[i];
+        if (!strcmp(nat->external_ip, ip_prefix)){
+            logical_ip = nat->logical_ip;
+            VLOG_WARN("Found NAT: %s : %s", nat->external_ip, nat->logical_ip);
+        }
+    }
+
+    if (!logical_ip){
+        return;
+    }
+
+    struct ovn_port *tracked_port = NULL;
+    VLOG_WARN("Searching for %s", logical_ip);
+    for (int i = 0; i < ext_nat_port->od->n_ls_peers; i++) {
+        struct ovn_datapath *peer_od = ext_nat_port->od->ls_peers[i];
+        VLOG_WARN(UUID_FMT" peer: "UUID_FMT, UUID_ARGS(&ext_nat_port->od->key), UUID_ARGS(&peer_od->key));
+        struct ovn_port *op;
+        HMAP_FOR_EACH (op, dp_node, &peer_od->ports) {
+            VLOG_WARN("port: %s", op->key);
+            for (int j = 0; j < op->n_lsp_addrs; j++) {
+                struct lport_addresses *addrs = &op->lsp_addrs[j];
+                for (int k = 0; k < addrs->n_ipv4_addrs; k++) {
+                    VLOG_WARN("Addr: %s", addrs->ipv4_addrs[k].addr_s);
+                    if (!strcmp(logical_ip, addrs->ipv4_addrs[k].addr_s)){
+                        VLOG_WARN("MATCH!!");
+                        tracked_port = op;
+                    }
+                }
+            }
+        }
+    }
+
+    VLOG_WARN("publishing NAT: %s", ip_prefix);
+    const struct sbrec_port_binding *tracked_pb = NULL;
+    if (tracked_port) {
+        tracked_pb = tracked_port->sb;
+    }
+
+    ar_sync_to_sb(ovnsb_txn, route_map,
+                  route->od->sb,
+                  route->out_port->sb,
+                  ip_prefix,
+                  tracked_pb);
+    free(ip_prefix);
+}
+
+/*
+static void
+publish_lb_route(struct ovsdb_idl_txn *ovnsb_txn,
+                 struct hmap *route_map,
+                 const struct parsed_route *route)
+{
+    if (!route->od->nbr) {
+        return;
+    }
+    
+    char *ip_prefix = normalize_v46_prefix(&route->prefix,
+                                           route->plen);
+    const struct sbrec_port_binding *tracked_pb = NULL;
+
+
+    ar_sync_to_sb(ovnsb_txn, route_map,
+                  route->od->sb,
+                  route->out_port->sb,
+                  ip_prefix,
+                  tracked_pb);
+}
+*/
+
 static void
 advertised_route_table_sync(
     struct ovsdb_idl_txn *ovnsb_txn,
@@ -421,10 +508,13 @@ advertised_route_table_sync(
                                         "dynamic-routing-static")) {
             continue;
         }
-        if (route->source == ROUTE_SOURCE_NAT &&
-                !smap_get_bool(&route->out_port->nbrp->options,
+        if (route->source == ROUTE_SOURCE_NAT) {
+            if (!smap_get_bool(&route->out_port->nbrp->options,
                                "dynamic-routing-nat", false)) {
                 continue;
+            }
+            publish_nat_route(ovnsb_txn, &sync_routes, route);
+            continue;
         }
         if (route->source == ROUTE_SOURCE_LB &&
                 !smap_get_bool(&route->out_port->nbrp->options,
