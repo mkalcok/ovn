@@ -2496,6 +2496,39 @@ join_logical_ports(const struct sbrec_port_binding_table *sbrec_pb_table,
     }
 }
 
+static bool
+get_lb_addresses(const struct lr_stateful_record *lr_stateful_rec, struct ds *addresses, bool routable_only)
+{
+    bool lbs_found = false;
+    if (!lr_stateful_rec) {
+        return lbs_found;
+    }
+
+    const char *ip_address;
+    if (routable_only) {
+        SSET_FOR_EACH (ip_address,
+                       &lr_stateful_rec->lb_ips->ips_v4_routable) {
+            ds_put_format(addresses, " %s", ip_address);
+            lbs_found = true;
+        }
+        SSET_FOR_EACH (ip_address,
+                       &lr_stateful_rec->lb_ips->ips_v6_routable) {
+            ds_put_format(addresses, " %s", ip_address);
+            lbs_found = true;
+        }
+    } else {
+        SSET_FOR_EACH (ip_address, &lr_stateful_rec->lb_ips->ips_v4) {
+            ds_put_format(addresses, " %s", ip_address);
+            lbs_found = true;
+        }
+        SSET_FOR_EACH (ip_address, &lr_stateful_rec->lb_ips->ips_v6) {
+            ds_put_format(addresses, " %s", ip_address);
+            lbs_found = true;
+        }
+    }
+
+    return lbs_found;
+}
 /* Returns an array of strings, each consisting of a MAC address followed
  * by one or more IP addresses, and if the port is a distributed gateway
  * port, followed by 'is_chassis_resident("LPORT_NAME")', where the
@@ -2606,29 +2639,8 @@ get_nat_addresses(const struct ovn_port *op, size_t *n, bool routable_only,
         }
     }
 
-    if (include_lb_ips && lr_stateful_rec) {
-        const char *ip_address;
-        if (routable_only) {
-            SSET_FOR_EACH (ip_address,
-                           &lr_stateful_rec->lb_ips->ips_v4_routable) {
-                ds_put_format(&c_addresses, " %s", ip_address);
-                central_ip_address = true;
-            }
-            SSET_FOR_EACH (ip_address,
-                           &lr_stateful_rec->lb_ips->ips_v6_routable) {
-                ds_put_format(&c_addresses, " %s", ip_address);
-                central_ip_address = true;
-            }
-        } else {
-            SSET_FOR_EACH (ip_address, &lr_stateful_rec->lb_ips->ips_v4) {
-                ds_put_format(&c_addresses, " %s", ip_address);
-                central_ip_address = true;
-            }
-            SSET_FOR_EACH (ip_address, &lr_stateful_rec->lb_ips->ips_v6) {
-                ds_put_format(&c_addresses, " %s", ip_address);
-                central_ip_address = true;
-            }
-        }
+    if (include_lb_ips) {
+        central_ip_address = get_lb_addresses(lr_stateful_rec, &c_addresses, routable_only);
     }
 
     if (central_ip_address) {
