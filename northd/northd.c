@@ -10984,6 +10984,7 @@ parsed_route_init(const struct ovn_datapath *od,
                   bool ecmp_symmetric_reply,
                   const struct sset *ecmp_selection_fields,
                   enum route_source source,
+                  bool install_lflow,
                   const struct ovsdb_idl_row *source_hint)
 {
 
@@ -11000,6 +11001,7 @@ parsed_route_init(const struct ovn_datapath *od,
     new_pr->lrp_addr_s = nullable_xstrdup(lrp_addr_s);
     new_pr->out_port = out_port;
     new_pr->source = source;
+    new_pr->install_lflow = install_lflow;
     if (ecmp_selection_fields) {
         sset_clone(&new_pr->ecmp_selection_fields, ecmp_selection_fields);
     } else {
@@ -11022,7 +11024,7 @@ parsed_route_clone(const struct parsed_route *pr)
         pr->od, nexthop, pr->prefix, pr->plen, pr->is_discard_route,
         pr->lrp_addr_s, pr->out_port, pr->route_table_id, pr->is_src_route,
         pr->ecmp_symmetric_reply, &pr->ecmp_selection_fields, pr->source,
-        pr->source_hint);
+        pr->install_lflow, pr->source_hint);
 
     new_pr->hash = pr->hash;
     return new_pr;
@@ -11061,13 +11063,14 @@ parsed_route_add(const struct ovn_datapath *od,
                  const struct sset *ecmp_selection_fields,
                  enum route_source source,
                  const struct ovsdb_idl_row *source_hint,
-                 struct hmap *routes)
+                 struct hmap *routes,
+                 bool install_lflow)
 {
 
     struct parsed_route *new_pr = parsed_route_init(
         od, nexthop, *prefix, plen, is_discard_route, lrp_addr_s, out_port,
         route_table_id, is_src_route, ecmp_symmetric_reply,
-        ecmp_selection_fields, source, source_hint);
+        ecmp_selection_fields, source, install_lflow, source_hint);
 
     new_pr->hash = route_hash(new_pr);
 
@@ -11204,7 +11207,7 @@ parsed_routes_add_static(const struct ovn_datapath *od,
     parsed_route_add(od, nexthop, &prefix, plen, is_discard_route, lrp_addr_s,
                      out_port, route_table_id, is_src_route,
                      ecmp_symmetric_reply, &ecmp_selection_fields, source,
-                     &route->header_, routes);
+                     &route->header_, routes, true);
     sset_destroy(&ecmp_selection_fields);
 }
 
@@ -11222,7 +11225,7 @@ parsed_routes_add_connected(const struct ovn_datapath *od,
                          false, addr->addr_s, op,
                          0, false,
                          false, NULL, ROUTE_SOURCE_CONNECTED,
-                         &op->nbrp->header_, routes);
+                         &op->nbrp->header_, routes, true);
     }
 
     for (size_t i = 0; i < op->lrp_networks.n_ipv6_addrs; i++) {
@@ -11234,7 +11237,7 @@ parsed_routes_add_connected(const struct ovn_datapath *od,
                          false, addr->addr_s, op,
                          0, false,
                          false, NULL, ROUTE_SOURCE_CONNECTED,
-                         &op->nbrp->header_, routes);
+                         &op->nbrp->header_, routes, true);
     }
 }
 
@@ -13725,6 +13728,9 @@ build_route_flows_for_lrouter(
     struct parsed_route *route;
     HMAP_FOR_EACH_WITH_HASH (route, key_node, uuid_hash(&od->key),
                              parsed_routes) {
+        if (!route->install_lflow) {
+            continue;
+        }
         if (route->source == ROUTE_SOURCE_CONNECTED) {
             unique_routes_add(&unique_routes, route);
             continue;
