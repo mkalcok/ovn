@@ -776,7 +776,9 @@ void northd_indices_create(struct northd_data *data,
 
 void route_policies_init(struct route_policies_data *);
 void route_policies_destroy(struct route_policies_data *);
-void build_parsed_routes(const struct ovn_datapath *, const struct hmap *,
+void build_parsed_routes(const struct ovn_datapath *,
+                         const struct lr_stateful_table *lr_stateful_table,
+                         const struct hmap *,
                          const struct hmap *, struct hmap *, struct simap *,
                          struct hmap *);
 uint32_t get_route_table_id(struct simap *, const char *);
