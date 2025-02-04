@@ -15864,6 +15864,17 @@ check_row_count Learned_Route 1
 lp=$(fetch_column port_binding _uuid logical_port=internet-phys)
 check_row_count Learned_Route 1 logical_port=$lp ip_prefix=233.252.0.0/24 nexthop=192.168.10.10
 
+# By setting a learning interface filter we will now forget about this route.
+check ovn-nbctl --wait=hv set Logical_Router_Port internet-phys \
+      options:dynamic-routing-ifname=thisdoesnotexist
+check_row_count Learned_Route 0
+
+# Changing it to "lo" will allow us to learn the route again.
+check ovn-nbctl --wait=hv set Logical_Router_Port internet-phys \
+      options:dynamic-routing-ifname=lo
+check_row_count Learned_Route 1
+
+
 OVS_APP_EXIT_AND_WAIT([ovn-controller])
 
 as ovn-sb
@@ -16073,9 +16084,19 @@ check ip route add 233.252.0.0/24 via 192.168.10.10 dev lo onlink vrf ovnvrf1337
 # For now we trigger a recompute as route watching is not yet implemented.
 check ovn-appctl -t ovn-controller inc-engine/recompute
 check ovn-nbctl --wait=hv sync
-check_row_count Learned_Route 2
+check_row_count Learned_Route 1
 lp=$(fetch_column port_binding _uuid logical_port=internet-phys)
 check_row_count Learned_Route 1 logical_port=$lp ip_prefix=233.252.0.0/24 nexthop=192.168.10.10
+
+# By setting a learning interface filter we will now forget about this route.
+check ovn-nbctl --wait=hv set Logical_Router_Port internet-phys \
+      options:dynamic-routing-ifname=thisdoesnotexist
+check_row_count Learned_Route 0
+
+# Changing it to "lo" will allow us to learn the route again.
+check ovn-nbctl --wait=hv set Logical_Router_Port internet-phys \
+      options:dynamic-routing-ifname=lo
+check_row_count Learned_Route 1
 
 as ovn-sb
 OVS_APP_EXIT_AND_WAIT([ovsdb-server])
