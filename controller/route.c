@@ -30,7 +30,6 @@
 #include "route.h"
 
 VLOG_DEFINE_THIS_MODULE(exchange);
-static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 20);
 
 #define PRIORITY_DEFAULT 1000
 #define PRIORITY_LOCAL_BOUND 100
@@ -138,6 +137,23 @@ route_run(struct route_ctx_in *r_ctx_in,
             char *ifname = nullable_xstrdup(
                                     smap_get(&repb->options,
                                              "dynamic-routing-ifname"));
+
+            const char *vrf_name = smap_get(&repb->options,
+                                            "dynamic-routing-vrf-name");
+            if (vrf_name && strlen(vrf_name) >= IFNAMSIZ) {
+                static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 20);
+                VLOG_WARN_RL(&rl, "Ignoring vrf name %s, since it is too long."
+                             "Maximum length is %d characters", vrf_name,
+                             IFNAMSIZ);
+                vrf_name = NULL;
+            }
+            if (vrf_name) {
+                memcpy(ad->vrf_name, vrf_name, strlen(vrf_name) + 1);
+            } else {
+                snprintf(ad->vrf_name, sizeof ad->vrf_name, "ovnvrf%"PRIi64,
+                         ad->db->tunnel_key);
+            }
+
             smap_add_nocopy(&ad->bound_ports,
                             xstrdup(local_peer->logical_port), ifname);
         }
@@ -164,6 +180,7 @@ route_run(struct route_ctx_in *r_ctx_in,
         struct in6_addr prefix;
         unsigned int plen;
         if (!ip46_parse_cidr(route->ip_prefix, &prefix, &plen)) {
+            static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 20);
             VLOG_WARN_RL(&rl, "bad 'ip_prefix' %s in route "
                          UUID_FMT, route->ip_prefix,
                          UUID_ARGS(&route->header_.uuid));
