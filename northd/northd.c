@@ -811,6 +811,44 @@ ovn_datapath_update_external_ids(struct ovn_datapath *od)
 }
 
 static void
+parse_dynamic_routing_redistribute(const struct smap *options,
+                                   bool *dynamic_routing_connected,
+                                   bool default_dynamic_routing_connected,
+                                   bool *dynamic_routing_static,
+                                   bool default_dynamic_routing_static)
+{
+    char *cur, *next, *start;
+
+    *dynamic_routing_connected = false;
+    *dynamic_routing_static = false;
+
+    const char *dynamic_routing_redistribute = smap_get(
+        options, "dynamic-routing-redistribute");
+    if (!dynamic_routing_redistribute) {
+        *dynamic_routing_connected = default_dynamic_routing_connected;
+        *dynamic_routing_static = default_dynamic_routing_static;
+        return;
+    }
+
+    start = next = xstrdup(dynamic_routing_redistribute);
+    while ((cur = strsep(&next, ";")) && *cur) {
+        if (!strcmp(cur, "connected")) {
+            *dynamic_routing_connected = true;
+            continue;
+        }
+        if (!strcmp(cur, "static")) {
+            *dynamic_routing_static = true;
+            continue;
+        }
+        static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 1);
+        VLOG_WARN_RL(&rl, "unkown dynamic-routing-redistribute option '%s'",
+                     cur);
+    }
+
+    free(start);
+}
+
+static void
 join_datapaths(const struct nbrec_logical_switch_table *nbrec_ls_table,
                const struct nbrec_logical_router_table *nbrec_lr_table,
                const struct sbrec_datapath_binding_table *sbrec_dp_table,
@@ -905,6 +943,10 @@ join_datapaths(const struct nbrec_logical_switch_table *nbrec_ls_table,
         }
         od->dynamic_routing = smap_get_bool(&od->nbr->options,
                                             "dynamic-routing", false);
+        parse_dynamic_routing_redistribute(&od->nbr->options,
+                                           &od->dynamic_routing_connected,
+                                           false,
+                                           &od->dynamic_routing_static, false);
         ovs_list_push_back(lr_list, &od->lr_list);
     }
 }
@@ -2242,6 +2284,11 @@ join_logical_ports_lrp(struct hmap *ports,
 
     op->prefix_delegation = smap_get_bool(&op->nbrp->options,
                                           "prefix_delegation", false);
+    parse_dynamic_routing_redistribute(&op->nbrp->options,
+                                       &op->dynamic_routing_connected,
+                                       od->dynamic_routing_connected,
+                                       &op->dynamic_routing_static,
+                                       od->dynamic_routing_static);
 
     for (size_t j = 0; j < op->lrp_networks.n_ipv4_addrs; j++) {
         sset_add(&op->od->router_ips,

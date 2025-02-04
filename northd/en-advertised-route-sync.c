@@ -148,6 +148,14 @@ advertised_route_table_sync(
         if (!route->od->dynamic_routing) {
             continue;
         }
+        if (route->source == ROUTE_SOURCE_CONNECTED &&
+                !route->out_port->dynamic_routing_connected) {
+            continue;
+        }
+        if (route->source == ROUTE_SOURCE_STATIC &&
+                !route->out_port->dynamic_routing_static) {
+            continue;
+        }
 
         char *ip_prefix = normalize_v46_prefix(&route->prefix,
                                                route->plen);
