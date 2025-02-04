@@ -97,6 +97,7 @@ OVN To-do List
 * ovn-controller Incremental processing
 
   * Implement I-P for datapath groups.
+  * Implement I-P for route exchange relevant ports.
 
 * ovn-northd parallel logical flow processing
 
