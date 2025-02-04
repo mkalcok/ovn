@@ -3031,6 +3031,16 @@ or
              table="Logical_Router_Port"/>.
 >>>>>>> 20721b41b (northd: Add filtering which routes to advertise.)
       </column>
+
+      <column name="options" key="dynamic-routing-vrf-name"
+          type='{"type": "string"}'>
+        Only relevant if <ref column="options" key="dynamic-routing"/>
+        is set to <code>true</code>.
+
+        This defines the name of the vrf the ovn-controller will use to
+        advertise and learn routes. If not set the vrf will be named "ovnvrf"
+        with the datapath id of the Logical Router appended to it.
+      </column>
     </group>
 
     <group title="Common Columns">
@@ -3847,6 +3857,37 @@ or
             chassis which already hosts this backing ip address.
           </li>
         </ul>
+      </column>
+
+      <column name="options" key="dynamic-routing-maintain-vrf"
+         type='{"type": "boolean"}'>
+        Only relevant if <ref column="options" key="dynamic-routing"
+        table="Logical_Router"/> on the respective Logical_Router is set
+        to <code>true</code>.
+
+        If this LRP is bound to a specific chassis then the ovn-controller of
+        this chassis will maintain a vrf.
+        This vrf will contain all the routes that should be announced from
+        this LRP.
+        Unless <ref column="options" key="dynamic-routing-vrf-name"
+        table="Logical_Router"/> is set the vrf will be named "ovnvrf" with
+        the datapath id of the Logical Router appended to it.
+      </column>
+
+      <column name="options" key="dynamic-routing-ifname"
+          type='{"type": "string"}'>
+        Only relevant if <ref column="options" key="dynamic-routing"
+        table="Logical_Router"/> on the respective Logical_Router is set
+        to <code>true</code>.
+
+        Only learn routes associated with the interface specified here.
+        This allows a single chassis to learn different routes on separate
+        LRPs bound to this chassis.
+
+        This is usefully e.g. in the case of a chassis with multiple links
+        towards the network fabric where all of them run BGP individually.
+        This option allows to have a 1:1 mapping between a single LRP and an
+        individual link.
       </column>
     </group>
 
