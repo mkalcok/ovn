@@ -19,6 +19,7 @@
 
 #include <net/if.h>
 
+#include "vswitch-idl.h"
 #include "openvswitch/hmap.h"
 #include "openvswitch/vlog.h"
 
@@ -30,7 +31,6 @@
 #include "route.h"
 
 VLOG_DEFINE_THIS_MODULE(exchange);
-static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 20);
 
 bool
 route_exchange_relevant_port(const struct sbrec_port_binding *pb)
@@ -73,6 +73,56 @@ find_route_exchange_pb(struct ovsdb_idl_index *sbrec_port_binding_by_name,
     return NULL;
 }
 
+static char *
+ifname_from_port_name(const char *port_mapping, struct shash *local_bindings,
+                      const struct sbrec_chassis *chassis,
+                      const char *port_name)
+{
+    if (!port_name) {
+        return NULL;
+    }
+
+    if (port_mapping) {
+        char *save_ptr = NULL;
+        char *tokstr = xstrdup(port_mapping);
+
+        for (char *token = strtok_r(tokstr, ";", &save_ptr);
+             token != NULL;
+             token = strtok_r(NULL, ";", &save_ptr)) {
+
+            char *key, *value;
+            key = value = xstrdup(token);
+            strsep(&value, "=");
+
+            if (!value) {
+              static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 1);
+              VLOG_WARN_RL(&rl, "dynamic-routing-port-mapping values '%s' is "
+                                "not valid.", token);
+              free(key);
+              free(tokstr);
+              break;
+            }
+
+            if (!strcmp(key, port_name)) {
+                char *out = xstrdup(value);
+                free(key);
+                free(tokstr);
+                return out;
+            }
+            free(key);
+        }
+        free(tokstr);
+    }
+
+    if (!local_binding_is_up(local_bindings, port_name, chassis)) {
+        return xstrdup("thisinterfacenameistoolongsowillnevertrigger");
+    }
+
+    struct local_binding *binding = local_binding_find(local_bindings,
+                                                       port_name);
+    return xstrdup(binding->iface->name);
+}
+
 static void
 advertise_datapath_cleanup(struct advertise_datapath_entry *ad)
 {
@@ -82,7 +132,7 @@ advertise_datapath_cleanup(struct advertise_datapath_entry *ad)
         free(ar);
     }
     hmap_destroy(&ad->routes);
-    sset_destroy(&ad->bound_ports);
+    smap_destroy(&ad->bound_ports);
     free(ad);
 }
 
@@ -114,7 +164,7 @@ route_run(struct route_ctx_in *r_ctx_in,
         ad = xzalloc(sizeof(*ad));
         ad->db = ld->datapath;
         hmap_init(&ad->routes);
-        sset_init(&ad->bound_ports);
+        smap_init(&ad->bound_ports);
 
         /* This is a LR datapath, find LRPs with route exchange options
          * that are bound locally. */
@@ -132,10 +182,17 @@ route_run(struct route_ctx_in *r_ctx_in,
 
             ad->maintain_vrf |= smap_get_bool(
                 &repb->options, "dynamic-routing-maintain-vrf", false);
-            sset_add(&ad->bound_ports, local_peer->logical_port);
+
+            const char *port_name = smap_get(&repb->options,
+                                            "dynamic-routing-port-name");
+            char *ifname = ifname_from_port_name(
+                r_ctx_in->dynamic_routing_port_mapping,
+                r_ctx_in->local_bindings, r_ctx_in->chassis, port_name);
+            smap_add_nocopy(&ad->bound_ports,
+                            xstrdup(local_peer->logical_port), ifname);
         }
 
-        if (sset_is_empty(&ad->bound_ports)) {
+        if (smap_is_empty(&ad->bound_ports)) {
             advertise_datapath_cleanup(ad);
             continue;
         }
@@ -157,6 +214,7 @@ route_run(struct route_ctx_in *r_ctx_in,
         struct in6_addr prefix;
         unsigned int plen;
         if (!ip46_parse_cidr(route->ip_prefix, &prefix, &plen)) {
+            static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 20);
             VLOG_WARN_RL(&rl, "bad 'ip_prefix' %s in route "
                          UUID_FMT, route->ip_prefix,
                          UUID_ARGS(&route->header_.uuid));
