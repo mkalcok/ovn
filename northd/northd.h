@@ -307,6 +307,17 @@ struct mcast_port_info {
                          * (e.g., IGMP join/leave). */
 };
 
+enum dynamic_routing_redistribute_mode_bits {
+    DRRM_CONNECTED_BIT = 0,
+    DRRM_STATIC_BIT    = 1,
+};
+
+enum dynamic_routing_redistribute_mode {
+    DRRM_NONE      = 0,
+    DRRM_CONNECTED = (1 << DRRM_CONNECTED_BIT),
+    DRRM_STATIC    = (1 << DRRM_STATIC_BIT),
+};
+
 /* The 'key' comes from nbs->header_.uuid or nbr->header_.uuid or
  * sb->external_ids:logical-switch. */
 struct ovn_datapath {
@@ -373,6 +384,8 @@ struct ovn_datapath {
     bool redirect_bridged;
     /* nbr has the option "dynamic-routing" set to true. */
     bool dynamic_routing;
+    /* The modes contained in the nbr option "dynamic-routing-redistribute". */
+    enum dynamic_routing_redistribute_mode dynamic_routing_redistribute;
 
     struct ovn_port **localnet_ports;
     size_t n_localnet_ports;
@@ -627,6 +640,11 @@ struct ovn_port {
 
     struct lport_addresses lrp_networks;
     bool prefix_delegation; /* True if IPv6 prefix delegation enabled. */
+
+    /* The modes contained in the nbrp option "dynamic-routing-redistribute".
+     * If the option is unset it will be initialized based on the nbr
+     * option. */
+    enum dynamic_routing_redistribute_mode dynamic_routing_redistribute;
 
     /* Logical port multicast data. */
     struct mcast_port_info mcast_info;
