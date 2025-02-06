@@ -47,6 +47,10 @@ Post v24.09.0
    - Logical router policies can now be arranged in chains. Using the new
      "jump" action, combined with new "chain" and "jump_chain" columns,
      allows for policies to be chained together.
+   - Dynamic Routing:
+     * Add the option "dynamic-routing" to Logical Routers. If set to true all
+       static and connected routes attached to the router are shared to the
+       southbound "Advertised_Route" table for sharing outside of OVN.
 
 OVN v24.09.0 - 13 Sep 2024
 --------------------------
