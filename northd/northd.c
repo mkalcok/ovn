@@ -846,6 +846,14 @@ parse_dynamic_routing_redistribute(
             out |= DRRM_STATIC;
             continue;
         }
+        if (!strcmp(token, "nat")) {
+            out |= DRRM_NAT;
+            continue;
+        }
+        if (!strcmp(token, "lb")) {
+            out |= DRRM_LB;
+            continue;
+        }
         static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 1);
         VLOG_WARN_RL(&rl, "unkown dynamic-routing-redistribute option '%s'",
                      token);
@@ -11272,6 +11280,34 @@ build_parsed_routes(const struct ovn_datapath *od, const struct hmap *lr_ports,
     }
 }
 
+void
+build_lb_nat_parsed_routes(const struct ovn_datapath *od,
+                           const struct lr_nat_record *lr_nat,
+                           struct hmap *routes)
+{
+    const struct ovn_port *op;
+    HMAP_FOR_EACH (op, dp_node, &od->ports) {
+        enum dynamic_routing_redistribute_mode drrm = op->dynamic_routing_redistribute;
+        if (!(drrm & DRRM_NAT)) {
+            continue;
+        }
+        /* I'm thinking of extending parsed_route struct with "tracked_port".
+         * Since we are already parsing/iterating NATs here, it feels more
+         * efficinet to figure out the tracked_port here, rather than
+         * re-parsing NATs down the line in the advertised_route_table_sync
+         * function before calling "ar_add_entry".*/
+        for (size_t i = 0; i < lr_nat->n_nat_entries; i++) {
+            const struct ovn_nat *nat = &lr_nat->nat_entries[i];
+            int plen = nat_entry_is_v6(nat) ? 128 : 32;
+            struct in6_addr prefix;
+            ip46_parse(nat->nb->external_ip, &prefix);
+            parsed_route_add(od, NULL, &prefix, plen, false,
+                             nat->nb->external_ip, op, 0, false, false,
+                             NULL, ROUTE_SOURCE_NAT, &op->nbrp->header_, routes);
+        }
+    }
+
+}
 struct ecmp_route_list_node {
     struct ovs_list list_node;
     uint16_t id; /* starts from 1 */
@@ -11441,6 +11477,8 @@ route_source_to_offset(enum route_source source)
 {
     switch (source) {
     case ROUTE_SOURCE_CONNECTED:
+    case ROUTE_SOURCE_NAT:
+    case ROUTE_SOURCE_LB:
         return ROUTE_PRIO_OFFSET_CONNECTED;
     case ROUTE_SOURCE_STATIC:
         return ROUTE_PRIO_OFFSET_STATIC;

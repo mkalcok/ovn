@@ -23,5 +23,7 @@ bool northd_output_acl_id_handler(struct engine_node *node,
                                   void *data OVS_UNUSED);
 bool northd_output_advertised_route_sync_handler(struct engine_node *node,
                                                  void *data OVS_UNUSED);
+bool northd_output_dynamic_routes_handler(struct engine_node *node,
+                                          void *data OVS_UNUSED);
 
 #endif

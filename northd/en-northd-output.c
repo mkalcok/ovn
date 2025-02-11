@@ -97,3 +97,11 @@ northd_output_advertised_route_sync_handler(struct engine_node *node,
     return true;
 }
 
+bool
+northd_output_dynamic_routes_handler(struct engine_node *node,
+                                     void *data OVS_UNUSED)
+{
+    engine_set_node_state(node, EN_UPDATED);
+    return true;
+}
+

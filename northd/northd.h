@@ -186,9 +186,13 @@ struct route_policy {
 };
 
 struct routes_data {
-    struct hmap parsed_routes;
+    struct hmap parsed_routes; /* Stores struct parsed_route. */
     struct simap route_tables;
     struct hmap bfd_active_connections;
+};
+
+struct dynamic_routes_data {
+    struct hmap parsed_routes; /* Stores struct parsed_route. */
 };
 
 struct route_policies_data {
@@ -312,6 +316,8 @@ enum dynamic_routing_redistribute_mode_bits {
     DRRM_CONNECTED_BIT = 0,
     DRRM_CONNECTED_AS_HOST_BIT = 1,
     DRRM_STATIC_BIT    = 2,
+    DRRM_NAT_BIT       = 3,
+    DRRM_LB_BIT        = 4,
 };
 
 enum dynamic_routing_redistribute_mode {
@@ -319,6 +325,8 @@ enum dynamic_routing_redistribute_mode {
     DRRM_CONNECTED = (1 << DRRM_CONNECTED_BIT),
     DRRM_CONNECTED_AS_HOST = (1 << DRRM_CONNECTED_AS_HOST_BIT),
     DRRM_STATIC    = (1 << DRRM_STATIC_BIT),
+    DRRM_NAT       = (1 << DRRM_NAT_BIT),
+    DRRM_LB        = (1 << DRRM_LB_BIT),
 };
 
 /* The 'key' comes from nbs->header_.uuid or nbr->header_.uuid or
@@ -730,6 +738,10 @@ enum route_source {
     ROUTE_SOURCE_STATIC,
     /* The route is dynamically learned by an ovn-controller. */
     ROUTE_SOURCE_LEARNED,
+    /* The route is derived from a NAT's external IP. */
+    ROUTE_SOURCE_NAT,
+    /* The route is derived from a LB's VIP. */
+    ROUTE_SOURCE_LB,
 };
 
 struct parsed_route {
@@ -811,6 +823,7 @@ void route_policies_destroy(struct route_policies_data *);
 void build_parsed_routes(const struct ovn_datapath *, const struct hmap *,
                          const struct hmap *, struct hmap *, struct simap *,
                          struct hmap *);
+void build_lb_nat_parsed_routes(const struct ovn_datapath *, const struct lr_nat_record *, struct hmap *);
 uint32_t get_route_table_id(struct simap *, const char *);
 void routes_init(struct routes_data *);
 void routes_destroy(struct routes_data *);
