@@ -16,6 +16,7 @@
 
 #include <config.h>
 
+#include <errno.h>
 #include <getopt.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -43,17 +44,21 @@ static void lr_nat_table_init(struct lr_nat_table *);
 static void lr_nat_table_clear(struct lr_nat_table *);
 static void lr_nat_table_destroy(struct lr_nat_table *);
 static void lr_nat_table_build(struct lr_nat_table *,
-                               const struct ovn_datapaths *lr_datapaths);
+                               const struct ovn_datapaths *lr_datapaths,
+                               const struct hmap *lr_ports);
 static struct lr_nat_record *lr_nat_table_find_by_index_(
     const struct lr_nat_table *, size_t od_index);
 
-static struct lr_nat_record *lr_nat_record_create(
-    struct lr_nat_table *, const struct ovn_datapath *);
+static struct lr_nat_record *lr_nat_record_create(struct lr_nat_table *,
+                                                  const struct ovn_datapath *,
+                                                  const struct hmap *lr_ports);
 static void lr_nat_record_init(struct lr_nat_record *,
-                               const struct ovn_datapath *);
+                               const struct ovn_datapath *,
+                               const struct hmap *lr_ports);
 static void lr_nat_record_clear(struct lr_nat_record *);
 static void lr_nat_record_reinit(struct lr_nat_record *,
-                                 const struct ovn_datapath *);
+                                 const struct ovn_datapath *,
+                                 const struct hmap *lr_ports);
 static void lr_nat_record_destroy(struct lr_nat_record *);
 
 static bool get_force_snat_ip(const struct ovn_datapath *,
@@ -105,7 +110,8 @@ en_lr_nat_run(struct engine_node *node, void *data_)
 
     stopwatch_start(LR_NAT_RUN_STOPWATCH_NAME, time_msec());
     lr_nat_table_clear(&data->lr_nats);
-    lr_nat_table_build(&data->lr_nats, &northd_data->lr_datapaths);
+    lr_nat_table_build(&data->lr_nats, &northd_data->lr_datapaths,
+                       &northd_data->lr_ports);
 
     stopwatch_stop(LR_NAT_RUN_STOPWATCH_NAME, time_msec());
     engine_set_node_state(node, EN_UPDATED);
@@ -133,7 +139,7 @@ lr_nat_northd_handler(struct engine_node *node, void *data_)
         od = hmapx_node->data;
         lrnat_rec = lr_nat_table_find_by_index_(&data->lr_nats, od->index);
         ovs_assert(lrnat_rec);
-        lr_nat_record_reinit(lrnat_rec, od);
+        lr_nat_record_reinit(lrnat_rec, od, &northd_data->lr_ports);
 
         /* Add the lrnet rec to the tracking data. */
         hmapx_add(&data->trk_data.crupdated, lrnat_rec);
@@ -169,14 +175,15 @@ lr_nat_table_clear(struct lr_nat_table *table)
 
 static void
 lr_nat_table_build(struct lr_nat_table *table,
-                   const struct ovn_datapaths *lr_datapaths)
+                   const struct ovn_datapaths *lr_datapaths,
+                   const struct hmap *lr_ports)
 {
     table->array = xrealloc(table->array,
                             ods_size(lr_datapaths) * sizeof *table->array);
 
     const struct ovn_datapath *od;
     HMAP_FOR_EACH (od, key_node, &lr_datapaths->datapaths) {
-        lr_nat_record_create(table, od);
+        lr_nat_record_create(table, od, lr_ports);
     }
 }
 
@@ -198,12 +205,13 @@ lr_nat_table_find_by_index_(const struct lr_nat_table *table,
 
 static struct lr_nat_record *
 lr_nat_record_create(struct lr_nat_table *table,
-                     const struct ovn_datapath *od)
+                     const struct ovn_datapath *od,
+                     const struct hmap *lr_ports)
 {
     ovs_assert(od->nbr);
 
     struct lr_nat_record *lrnat_rec = xzalloc(sizeof *lrnat_rec);
-    lr_nat_record_init(lrnat_rec, od);
+    lr_nat_record_init(lrnat_rec, od, lr_ports);
 
     hmap_insert(&table->entries, &lrnat_rec->key_node,
                 uuid_hash(&od->nbr->header_.uuid));
@@ -211,9 +219,161 @@ lr_nat_record_create(struct lr_nat_table *table,
     return lrnat_rec;
 }
 
+static bool
+l3_nat_entry_populate(const struct ovn_datapath *od, struct ovn_nat *nat_entry,
+                      const struct hmap *lr_ports)
+{
+    const struct nbrec_nat *nat = nat_entry->nb;
+    struct in6_addr ipv6, mask_v6, v6_exact = IN6ADDR_EXACT_INIT;
+    ovs_be32 mask;
+    ovs_be32 ip;
+
+    if (nat->allowed_ext_ips && nat->exempted_ext_ips) {
+        static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 1);
+        VLOG_WARN_RL(&rl, "NAT rule: "UUID_FMT" not applied, since "
+                    "both allowed and exempt external ips set",
+                    UUID_ARGS(&(nat->header_.uuid)));
+        return false;
+    }
+
+    char *error = ip_parse_masked(nat->external_ip, &ip, &mask);
+    nat_entry->is_v6 = false;
+
+    if (error || mask != OVS_BE32_MAX) {
+        free(error);
+        error = ipv6_parse_masked(nat->external_ip, &ipv6, &mask_v6);
+        if (error || memcmp(&mask_v6, &v6_exact, sizeof(mask_v6))) {
+            /* Invalid for both IPv4 and IPv6 */
+            static struct vlog_rate_limit rl =
+                VLOG_RATE_LIMIT_INIT(5, 1);
+            VLOG_WARN_RL(&rl, "bad external ip %s for nat",
+                        nat->external_ip);
+            free(error);
+            return false;
+        }
+        /* It was an invalid IPv4 address, but valid IPv6.
+        * Treat the rest of the handling of this NAT rule
+        * as IPv6. */
+        nat_entry->is_v6 = true;
+    }
+
+    /* Validate gateway_port of NAT rule. */
+    nat_entry->l3dgw_port = NULL;
+    if (nat->gateway_port == NULL) {
+        if (od->n_l3dgw_ports == 1) {
+            nat_entry->l3dgw_port = od->l3dgw_ports[0];
+        } else if (od->n_l3dgw_ports > 1) {
+            /* Find the DGP reachable for the NAT external IP. */
+            for (size_t i = 0; i < od->n_l3dgw_ports; i++) {
+               if (lrp_find_member_ip(od->l3dgw_ports[i], nat->external_ip)) {
+                   nat_entry->l3dgw_port = od->l3dgw_ports[i];
+                   break;
+               }
+            }
+            if (nat_entry->l3dgw_port == NULL) {
+                static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 1);
+                VLOG_WARN_RL(&rl, "Unable to determine gateway_port for NAT "
+                             "with external_ip: %s configured on logical "
+                             "router: %s with multiple distributed gateway "
+                             "ports", nat->external_ip, od->nbr->name);
+                return false;
+            }
+        }
+    } else {
+        nat_entry->l3dgw_port =
+            ovn_port_find(lr_ports, nat->gateway_port->name);
+
+        if (!nat_entry->l3dgw_port || nat_entry->l3dgw_port->od != od ||
+            !lrp_is_l3dgw(nat_entry->l3dgw_port)) {
+            static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 1);
+            VLOG_WARN_RL(&rl, "gateway_port: %s of NAT configured on "
+                         "logical router: %s is not a valid distributed "
+                         "gateway port on that router",
+                         nat->gateway_port->name, od->nbr->name);
+            return false;
+        }
+    }
+
+    /* Check the validity of nat->logical_ip. 'logical_ip' can
+    * be a subnet when the type is "snat". */
+    if (nat_entry->is_v6) {
+        error = ipv6_parse_masked(nat->logical_ip, &ipv6, &mask_v6);
+        nat_entry->cidr_bits = ipv6_count_cidr_bits(&mask_v6);
+    } else {
+        error = ip_parse_masked(nat->logical_ip, &ip, &mask);
+        nat_entry->cidr_bits = ip_count_cidr_bits(mask);
+    }
+    if (nat_entry->type == SNAT) {
+        if (error) {
+            /* Invalid for both IPv4 and IPv6 */
+            static struct vlog_rate_limit rl =
+                VLOG_RATE_LIMIT_INIT(5, 1);
+            VLOG_WARN_RL(&rl, "bad ip network or ip %s for snat "
+                        "in router "UUID_FMT"",
+                        nat->logical_ip, UUID_ARGS(&od->key));
+            free(error);
+            return false;
+        }
+    } else {
+        if (error || (nat_entry->is_v6 == false && mask != OVS_BE32_MAX)
+            || (nat_entry->is_v6 && memcmp(&mask_v6, &v6_exact,
+                                           sizeof mask_v6))) {
+            /* Invalid for both IPv4 and IPv6 */
+            static struct vlog_rate_limit rl =
+                VLOG_RATE_LIMIT_INIT(5, 1);
+            VLOG_WARN_RL(&rl, "bad ip %s for dnat in router "
+                ""UUID_FMT"", nat->logical_ip, UUID_ARGS(&od->key));
+            free(error);
+            return false;
+        }
+    }
+
+    /* For distributed router NAT, determine whether this NAT rule
+     * satisfies the conditions for distributed NAT processing. */
+    nat_entry->is_distributed = false;
+
+    /* NAT cannnot be distributed if the DGP's peer
+     * has a chassisredirect port (as the routing is centralized
+     * on the gateway chassis for the DGP's networks/subnets.)
+     */
+    struct ovn_port *l3dgw_port = nat_entry->l3dgw_port;
+    if (l3dgw_port && l3dgw_port->peer && l3dgw_port->peer->cr_port) {
+        return true;
+    }
+
+    if (od->n_l3dgw_ports && nat_entry->type == DNAT_AND_SNAT &&
+        nat->logical_port && nat->external_mac) {
+        if (eth_addr_from_string(nat->external_mac, &nat_entry->mac)) {
+            nat_entry->is_distributed = true;
+        } else {
+            static struct vlog_rate_limit rl =
+                VLOG_RATE_LIMIT_INIT(5, 1);
+            VLOG_WARN_RL(&rl, "bad mac %s for dnat in router "
+                ""UUID_FMT"", nat->external_mac, UUID_ARGS(&od->key));
+            return false;
+        }
+    }
+
+    return true;
+}
+
+/* Returns true if a 'nat_entry' is valid, i.e.:
+ * - parsing was successful.
+ * - the string yielded exactly one IPv4 address or exactly one IPv6 address.
+ */
+static bool
+lr_nat_entry_ext_addrs_valid(const struct ovn_nat *nat_entry)
+{
+    const struct lport_addresses *ext_addrs = &nat_entry->ext_addrs;
+
+    return (ext_addrs->n_ipv4_addrs == 1 && ext_addrs->n_ipv6_addrs == 0) ||
+        (ext_addrs->n_ipv4_addrs == 0 && ext_addrs->n_ipv6_addrs == 1);
+}
+
 static void
 lr_nat_record_init(struct lr_nat_record *lrnat_rec,
-                   const struct ovn_datapath *od)
+                   const struct ovn_datapath *od,
+                   const struct hmap *lr_ports)
 {
     lrnat_rec->lr_index = od->index;
     lrnat_rec->nbr_uuid = od->nbr->header_.uuid;
@@ -285,16 +445,22 @@ lr_nat_record_init(struct lr_nat_record *lrnat_rec,
 
         nat_entry->nb = nat;
         nat_entry->is_router_ip = false;
+        nat_entry->is_valid = true;
+
+        if (!l3_nat_entry_populate(od, nat_entry, lr_ports)) {
+            nat_entry->is_valid = false;
+        }
 
         if (!extract_ip_addresses(nat->external_ip,
                                   &nat_entry->ext_addrs) ||
-                !nat_entry_is_valid(nat_entry)) {
+                !lr_nat_entry_ext_addrs_valid(nat_entry)) {
             static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 1);
 
             VLOG_WARN_RL(&rl,
                          "Bad ip address %s in nat configuration "
                          "for router %s", nat->external_ip,
                          od->nbr->name);
+            nat_entry->is_valid = false;
             continue;
         }
 
@@ -348,10 +514,11 @@ lr_nat_record_clear(struct lr_nat_record *lrnat_rec)
 
 static void
 lr_nat_record_reinit(struct lr_nat_record *lrnat_rec,
-                     const struct ovn_datapath *od)
+                     const struct ovn_datapath *od,
+                     const struct hmap *lr_ports)
 {
     lr_nat_record_clear(lrnat_rec);
-    lr_nat_record_init(lrnat_rec, od);
+    lr_nat_record_init(lrnat_rec, od, lr_ports);
 }
 
 static void
