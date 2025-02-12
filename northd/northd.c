@@ -11415,6 +11415,83 @@ build_nat_connected_parsed_routes(
     }
 }
 
+static void
+build_lb_parsed_route_for_port(const struct ovn_port *advertising_op,
+                               const struct ovn_port *tracked_port,
+                               const struct ovn_lb_ip_set *lb_ips,
+                               struct hmap *routes)
+{
+    const struct ovn_datapath *advertising_od = advertising_op->od;
+
+    const char *ip_address;
+    SSET_FOR_EACH (ip_address, &lb_ips->ips_v4) {
+        struct in6_addr prefix;
+        ip46_parse(ip_address, &prefix);
+        parsed_route_add(advertising_od, NULL, &prefix, 32, false,
+                         ip_address, advertising_op, 0, false, false,
+                         NULL, ROUTE_SOURCE_LB, &advertising_op->nbrp->header_,
+                         tracked_port, routes);
+    }
+    SSET_FOR_EACH (ip_address, &lb_ips->ips_v6) {
+        struct in6_addr prefix;
+        ip46_parse(ip_address, &prefix);
+        parsed_route_add(advertising_od, NULL, &prefix, 128, false,
+                         ip_address, advertising_op, 0, false, false,
+                         NULL, ROUTE_SOURCE_LB, &advertising_op->nbrp->header_,
+                         tracked_port, routes);
+    }
+}
+
+void
+build_lb_connected_parsed_routes(const struct ovn_datapath *od,
+                                 const struct lr_stateful_table *lr_stateful_table,
+                                 struct hmap *routes)
+{
+    const struct ovn_port *op;
+    HMAP_FOR_EACH (op, dp_node, &od->ports) {
+        if (!drr_mode_LB_is_set(op->dynamic_routing_redistribute)) {
+            continue;
+        }
+
+        if (!op->peer) {
+            continue;
+        }
+
+        struct ovn_datapath *peer_od = op->peer->od;
+        if (!peer_od->nbs && !peer_od->nbr) {
+            continue;
+        }
+
+        const struct lr_stateful_record *lr_stateful_rec;
+        const struct ovn_port *peer_port = NULL;
+        /* This is directly connected LR peer. */
+        if (peer_od->nbr) {
+            lr_stateful_rec = lr_stateful_table_find_by_index(
+                lr_stateful_table, peer_od->index);
+            peer_port = op->peer;
+            build_lb_parsed_route_for_port(op, peer_port,
+                                           lr_stateful_rec->lb_ips, routes);
+            return;
+        }
+
+        /* This peer is LSP, we need to check all connected router ports for LBs.*/
+        for (size_t i = 0; i < peer_od->n_router_ports; i++) {
+            peer_port = peer_od->router_ports[i]->peer;
+            if (peer_port == op) {
+                /* no need to check for LBs on ovn_port that initiated this
+                 * function.*/
+                continue;
+            }
+            lr_stateful_rec = lr_stateful_table_find_by_index(
+                lr_stateful_table, peer_port->od->index);
+
+            build_lb_parsed_route_for_port(op, peer_port,
+                                           lr_stateful_rec->lb_ips, routes);
+        }
+    }
+}
+
+
 void
 build_lb_parsed_routes(const struct ovn_datapath *od,
                        const struct ovn_lb_ip_set *lb_ips,
@@ -11439,28 +11516,9 @@ build_lb_parsed_routes(const struct ovn_datapath *od,
                                           ? od->l3dgw_ports
                                           : &op_;
 
-        const char *ip_address;
-        SSET_FOR_EACH (ip_address, &lb_ips->ips_v4) {
-            struct in6_addr prefix;
-            ip46_parse(ip_address, &prefix);
-
-            for (size_t i = 0; i < n_tracked_ports; i++) {
-                parsed_route_add(od, NULL, &prefix, 32, false,
-                                ip_address, op, 0, false, false,
-                                NULL, ROUTE_SOURCE_LB, &op->nbrp->header_,
-                                tracked_ports[i], routes);
-            }
-        }
-        SSET_FOR_EACH (ip_address, &lb_ips->ips_v6) {
-            struct in6_addr prefix;
-            ip46_parse(ip_address, &prefix);
-
-            for (size_t i = 0; i < n_tracked_ports; i++) {
-                parsed_route_add(od, NULL, &prefix, 128, false,
-                                ip_address, op, 0, false, false,
-                                NULL, ROUTE_SOURCE_LB, &op->nbrp->header_,
-                                tracked_ports[i], routes);
-            }
+        for (size_t i = 0; i < n_tracked_ports; i++) {
+            build_lb_parsed_route_for_port(op, tracked_ports[i], lb_ips,
+                                           routes);
         }
     }
 

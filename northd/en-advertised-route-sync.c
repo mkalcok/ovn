@@ -175,15 +175,20 @@ void
     return data;
 }
 
+static void
+en_dynamic_routes_clean(struct dynamic_routes_data *data)
+{
+    struct parsed_route *r;
+    HMAP_FOR_EACH_POP (r, key_node, &data->parsed_routes) {
+        parsed_route_free(r);
+    }
+}
 void
 en_dynamic_routes_cleanup(void *data_)
 {
     struct dynamic_routes_data *data = data_;
 
-    struct parsed_route *r;
-    HMAP_FOR_EACH_POP (r, key_node, &data->parsed_routes) {
-        parsed_route_free(r);
-    }
+    en_dynamic_routes_clean(data);
     hmap_destroy(&data->parsed_routes);
 }
 
@@ -195,6 +200,7 @@ en_dynamic_routes_run(struct engine_node *node, void *data)
     struct ed_type_lr_stateful *lr_stateful_data =
         engine_get_input_data("lr_stateful", node);
 
+    en_dynamic_routes_clean(data);
     const struct lr_stateful_record *lr_stateful_rec;
     HMAP_FOR_EACH (lr_stateful_rec, key_node,
                    &lr_stateful_data->table.entries) {
@@ -211,6 +217,8 @@ en_dynamic_routes_run(struct engine_node *node, void *data)
 
         build_lb_parsed_routes(od, lr_stateful_rec->lb_ips,
                                &dynamic_routes_data->parsed_routes);
+        build_lb_connected_parsed_routes(od, &lr_stateful_data->table,
+                                         &dynamic_routes_data->parsed_routes);
     }
     engine_set_node_state(node, EN_UPDATED);
 }
@@ -437,11 +445,29 @@ advertised_route_table_sync_route_add(
     if (route->source == ROUTE_SOURCE_STATIC && !drr_mode_STATIC_is_set(drr)) {
         return;
     }
-    if (route->source == ROUTE_SOURCE_NAT && !drr_mode_NAT_is_set(drr)) {
-        return;
+    if (route->source == ROUTE_SOURCE_NAT) {
+        if (!drr_mode_NAT_is_set(drr)) {
+            return;
+        }
+        /* If NAT route tracks port on a different DP than the one that
+         * advertises the route, we need to watch for changes on that DP as
+         * well. */
+        if (route->tracked_port && route->tracked_port->od != route->od) {
+            uuidset_insert(&data->nb_lr,
+                           &route->tracked_port->od->nbr->header_.uuid);
+        }
     }
-    if (route->source == ROUTE_SOURCE_LB && (drr & DRRM_LB) == 0) {
-        return;
+    if (route->source == ROUTE_SOURCE_LB) {
+        if (!drr_mode_LB_is_set(drr)) {
+            return;
+        }
+        /* If LB route tracks port on a different DP than the one that
+         * advertises the route, we need to watch for changes on that DP as
+         * well. */
+        if (route->tracked_port && route->tracked_port->od != route->od) {
+            uuidset_insert(&data->nb_lr,
+                           &route->tracked_port->od->nbr->header_.uuid);
+        }
     }
 
     char *ip_prefix = normalize_v46_prefix(&route->prefix, route->plen);
