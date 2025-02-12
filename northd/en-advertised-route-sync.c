@@ -209,7 +209,7 @@ en_dynamic_routes_run(struct engine_node *node, void *data)
                                 &dynamic_routes_data->parsed_routes);
 
         build_lb_parsed_routes(od, lr_stateful_rec->lb_ips,
-                               northd_data,
+                               lr_stateful_data,
                                &dynamic_routes_data->parsed_routes);
     }
     engine_set_node_state(node, EN_UPDATED);

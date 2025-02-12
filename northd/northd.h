@@ -831,7 +831,7 @@ void build_nat_parsed_routes(const struct ovn_datapath *,
                              struct hmap *);
 void build_lb_parsed_routes(const struct ovn_datapath *,
                             const struct ovn_lb_ip_set *,
-                            const struct northd_data *,
+                            const struct lr_stateful_table *,
                             struct hmap *);
 uint32_t get_route_table_id(struct simap *, const char *);
 void routes_init(struct routes_data *);
