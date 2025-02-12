@@ -25,7 +25,6 @@
 #include "openvswitch/hmap.h"
 #include "ovn-util.h"
 
-
 static void
 advertised_route_table_sync(
     struct ovsdb_idl_txn *ovnsb_txn,
@@ -205,9 +204,13 @@ en_dynamic_routes_run(struct engine_node *node, void *data)
         if (!od->dynamic_routing) {
             continue;
         }
-        build_lb_nat_parsed_routes(od, lr_stateful_rec->lrnat_rec,
-                                   &dynamic_routes_data->parsed_routes);
+        build_nat_parsed_routes(od, lr_stateful_rec->lrnat_rec,
+                                northd_data,
+                                &dynamic_routes_data->parsed_routes);
 
+        build_lb_parsed_routes(od, lr_stateful_rec->lb_ips,
+                               northd_data,
+                               &dynamic_routes_data->parsed_routes);
     }
     engine_set_node_state(node, EN_UPDATED);
 }
@@ -442,10 +445,19 @@ advertised_route_table_sync_route_add(
     if (route->source == ROUTE_SOURCE_NAT && (drr & DRRM_NAT) == 0) {
         return;
     }
+    if (route->source == ROUTE_SOURCE_LB && (drr & DRRM_LB) == 0) {
+        return;
+    }
 
+    /* XXX: I'm not sure if normalize prefix is the best call here. It doesn't
+     * include "/plen" for host routes, so they get announced without it. */
     char *ip_prefix = normalize_v46_prefix(&route->prefix, route->plen);
+    const struct sbrec_port_binding *tracked_port = NULL;
+    if (route->tracked_port) {
+        tracked_port = route->tracked_port->sb;
+    }
     ar_add_entry(sync_routes, route->od->sb, route->out_port->sb,
-                 ip_prefix, NULL);
+                 ip_prefix, tracked_port);
 }
 
 static void

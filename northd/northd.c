@@ -10992,6 +10992,7 @@ parsed_route_init(const struct ovn_datapath *od,
                   bool ecmp_symmetric_reply,
                   const struct sset *ecmp_selection_fields,
                   enum route_source source,
+                  const struct ovn_port *tracked_port,
                   const struct ovsdb_idl_row *source_hint)
 {
 
@@ -11007,6 +11008,7 @@ parsed_route_init(const struct ovn_datapath *od,
     new_pr->is_discard_route = is_discard_route;
     new_pr->lrp_addr_s = nullable_xstrdup(lrp_addr_s);
     new_pr->out_port = out_port;
+    new_pr->tracked_port = tracked_port;
     new_pr->source = source;
     if (ecmp_selection_fields) {
         sset_clone(&new_pr->ecmp_selection_fields, ecmp_selection_fields);
@@ -11030,7 +11032,7 @@ parsed_route_clone(const struct parsed_route *pr)
         pr->od, nexthop, pr->prefix, pr->plen, pr->is_discard_route,
         pr->lrp_addr_s, pr->out_port, pr->route_table_id, pr->is_src_route,
         pr->ecmp_symmetric_reply, &pr->ecmp_selection_fields, pr->source,
-        pr->source_hint);
+        pr->tracked_port, pr->source_hint);
 
     new_pr->hash = pr->hash;
     return new_pr;
@@ -11069,13 +11071,14 @@ parsed_route_add(const struct ovn_datapath *od,
                  const struct sset *ecmp_selection_fields,
                  enum route_source source,
                  const struct ovsdb_idl_row *source_hint,
+                 const struct ovn_port *tracked_port,
                  struct hmap *routes)
 {
 
     struct parsed_route *new_pr = parsed_route_init(
         od, nexthop, *prefix, plen, is_discard_route, lrp_addr_s, out_port,
         route_table_id, is_src_route, ecmp_symmetric_reply,
-        ecmp_selection_fields, source, source_hint);
+        ecmp_selection_fields, source, tracked_port, source_hint);
 
     new_pr->hash = route_hash(new_pr);
 
@@ -11212,7 +11215,7 @@ parsed_routes_add_static(const struct ovn_datapath *od,
     parsed_route_add(od, nexthop, &prefix, plen, is_discard_route, lrp_addr_s,
                      out_port, route_table_id, is_src_route,
                      ecmp_symmetric_reply, &ecmp_selection_fields, source,
-                     &route->header_, routes);
+                     &route->header_, NULL, routes);
     sset_destroy(&ecmp_selection_fields);
 }
 
@@ -11230,7 +11233,7 @@ parsed_routes_add_connected(const struct ovn_datapath *od,
                          false, addr->addr_s, op,
                          0, false,
                          false, NULL, ROUTE_SOURCE_CONNECTED,
-                         &op->nbrp->header_, routes);
+                         &op->nbrp->header_, NULL, routes);
     }
 
     for (size_t i = 0; i < op->lrp_networks.n_ipv6_addrs; i++) {
@@ -11242,7 +11245,7 @@ parsed_routes_add_connected(const struct ovn_datapath *od,
                          false, addr->addr_s, op,
                          0, false,
                          false, NULL, ROUTE_SOURCE_CONNECTED,
-                         &op->nbrp->header_, routes);
+                         &op->nbrp->header_, NULL, routes);
     }
 }
 
@@ -11280,10 +11283,153 @@ build_parsed_routes(const struct ovn_datapath *od, const struct hmap *lr_ports,
     }
 }
 
+static int
+lrouter_check_nat_entry(const struct ovn_datapath *od,
+                        const struct ovn_nat *nat_entry,
+                        const struct hmap *lr_ports, ovs_be32 *mask,
+                        bool *is_v6, int *cidr_bits, struct eth_addr *mac,
+                        bool *distributed, struct ovn_port **nat_l3dgw_port);
+
+static const struct ovn_port *
+get_nat_route_tracked_port(const struct ovn_port *op,
+                           const struct ovn_nat *nat,
+                           const struct northd_data *northd_data)
+{
+    /* Ports on GW routers don't need tracked_port because all resources
+     * are located on the same chassis.*/
+    if (op->od->is_gw_router) {
+        return NULL;
+    }
+    struct eth_addr mac = eth_addr_broadcast;
+    bool is_v6, distributed_nat;
+    ovs_be32 mask;
+    int cidr_bits;
+    struct ovn_port *l3dgw_port;
+
+    if (lrouter_check_nat_entry(op->od, nat, &northd_data->lr_ports, &mask, &is_v6,
+                                &cidr_bits,
+                                &mac, &distributed_nat, &l3dgw_port) < 0) {
+        return NULL;
+    }
+
+    /* For distributed NAT rules, we find ovn_port with name that matches
+     * logical_port value of the NAT entry, and use that as tracked_port. */
+    if (distributed_nat) {
+        return ovn_port_find(&northd_data->ls_ports, nat->nb->logical_port);
+    /* For centralized NAT rules, we use designated DGP as a tracked port. */
+    } else {
+        return l3dgw_port;
+    }
+
+    return NULL;
+}
+
+static void
+lport_addrs_to_parsed_routes(const struct ovn_port *out_port,
+                             const struct ovn_port *tracked_port,
+                             const struct lport_addresses *laddrs,
+                             enum route_source route_type,
+                             struct hmap *routes)
+{
+    for (int i = 0; i < laddrs->n_ipv4_addrs; i++) {
+        struct ipv4_netaddr *addr = &laddrs->ipv4_addrs[i];
+        struct in6_addr prefix;
+        ip46_parse(addr->network_s, &prefix);
+        parsed_route_add(out_port->od, NULL, &prefix, addr->plen,
+                         false, addr->addr_s, out_port,
+                         0, false,
+                         false, NULL, route_type,
+                         &out_port->nbrp->header_, tracked_port, routes);
+    }
+    for (int i = 0; i < laddrs->n_ipv6_addrs; i++) {
+        struct ipv6_netaddr *addr = &laddrs->ipv6_addrs[i];
+        parsed_route_add(out_port->od, NULL, &addr->addr, addr->plen,
+                         false, addr->addr_s, out_port,
+                         0, false,
+                         false, NULL, route_type,
+                         &out_port->nbrp->header_, tracked_port, routes);
+    }
+}
+
+/* XXX: This function is, in nature, very similar to how
+ * publish_host_routes_lrp looks up neighboring host routes. I really wanted
+ * to reuse it, but it's designed to work with already existing parsed_routes
+ * when creating Advertised_Route records. And that doesn't work in following
+ * scenario:
+ *
+ *    R1  --- ls_int --- R2
+ *
+ * If R1 and R2 don't have IPv4/6 configured on their LRPs plugged to
+ * ls_int, and you set "connected-as-host", no parsed_routes will be generated
+ * (makes sense). But as a consequence, publish_host_routes_lrp is never
+ * executed.
+ * We would very much like this scenario to work. i.e. no explicit IP
+ * configuration on ls_int, but NATs/LBs on R2 are reachable from R1 over
+ * R2s IPv6 LLA. This function aims to solve it by generating
+ * advertised_routes for NATs that are on op's neighbors (either directly
+ * connected LRs or LRs connected to same LS as op). I tried to keep the
+ * overhead to minimum.
+ */
+static void
+build_connected_nat_routes(const struct ovn_port *op, struct hmap *routes)
+{
+    if (!op->peer) {
+        return;
+    }
+    struct ovn_datapath *peer_od = op->peer->od;
+    if (!peer_od->nbs && !peer_od->nbr) {
+        return;
+    }
+
+    const struct ovn_port *peer_port = NULL;
+    /* This is directly connected LR peer. */
+    if (peer_od->nbr) {
+        peer_port = op->peer;
+        size_t n_nats = 0;
+        char **nats = NULL;
+        nats = get_nat_addresses(peer_port, &n_nats, false, false, NULL, true);
+        for (size_t i = 0; i < n_nats; i++) {
+            /* XXX: This block should be probably squshed to a function. It's
+             * bit repetitive with the one bellow. */
+            struct lport_addresses laddrs;
+            int ofs = 0;
+            extract_addresses(nats[i], &laddrs, &ofs);
+            lport_addrs_to_parsed_routes(op, peer_port, &laddrs, ROUTE_SOURCE_NAT, routes);
+            free(nats[i]);
+            destroy_lport_addresses(&laddrs);
+        }
+        free(nats);
+        return;
+    }
+
+    /* This peer is LSP, we need to check all connected router ports for NAT.*/
+    for (size_t i = 0; i < peer_od->n_router_ports; i++) {
+        peer_port = peer_od->router_ports[i]->peer;
+        if (peer_port == op) {
+            /* no need to check NAT addresses on ovn_port that initiated this
+             * function.*/
+            continue;
+        }
+        size_t n_nats = 0;
+        char **nats = NULL;
+        nats = get_nat_addresses(peer_port, &n_nats, false, false, NULL, true);
+        for (size_t j = 0; j < n_nats; j++) {
+            struct lport_addresses laddrs;
+            int ofs = 0;
+            extract_addresses(nats[j], &laddrs, &ofs);
+            lport_addrs_to_parsed_routes(op, peer_port, &laddrs, ROUTE_SOURCE_NAT, routes);
+            free(nats[j]);
+            destroy_lport_addresses(&laddrs);
+        }
+        free(nats);
+    }
+}
+
 void
-build_lb_nat_parsed_routes(const struct ovn_datapath *od,
-                           const struct lr_nat_record *lr_nat,
-                           struct hmap *routes)
+build_nat_parsed_routes(const struct ovn_datapath *od,
+                        const struct lr_nat_record *lr_nat,
+                        const struct northd_data *northd_data,
+                        struct hmap *routes)
 {
     const struct ovn_port *op;
     HMAP_FOR_EACH (op, dp_node, &od->ports) {
@@ -11291,19 +11437,62 @@ build_lb_nat_parsed_routes(const struct ovn_datapath *od,
         if (!(drrm & DRRM_NAT)) {
             continue;
         }
-        /* I'm thinking of extending parsed_route struct with "tracked_port".
-         * Since we are already parsing/iterating NATs here, it feels more
-         * efficinet to figure out the tracked_port here, rather than
-         * re-parsing NATs down the line in the advertised_route_table_sync
-         * function before calling "ar_add_entry".*/
+
         for (size_t i = 0; i < lr_nat->n_nat_entries; i++) {
             const struct ovn_nat *nat = &lr_nat->nat_entries[i];
             int plen = nat_entry_is_v6(nat) ? 128 : 32;
             struct in6_addr prefix;
             ip46_parse(nat->nb->external_ip, &prefix);
+            const struct ovn_port *tracked_port =
+                get_nat_route_tracked_port(op, nat, northd_data);
             parsed_route_add(od, NULL, &prefix, plen, false,
                              nat->nb->external_ip, op, 0, false, false,
-                             NULL, ROUTE_SOURCE_NAT, &op->nbrp->header_, routes);
+                             NULL, ROUTE_SOURCE_NAT, &op->nbrp->header_,
+                             tracked_port, routes);
+        }
+
+        /* XXX: This could be made optional by adding "nat-connected" option
+         * to dynamic-routing-redistribute. Similar to how connected and
+         * connected-as-host work.*/
+        build_connected_nat_routes(op, routes);
+    }
+
+}
+
+void
+build_lb_parsed_routes(const struct ovn_datapath *od,
+                        const struct ovn_lb_ip_set *lb_ips,
+                        const struct northd_data *northd_data,
+                        struct hmap *routes)
+{
+    const struct ovn_port *op;
+    HMAP_FOR_EACH (op, dp_node, &od->ports) {
+        enum dynamic_routing_redistribute_mode drrm = op->dynamic_routing_redistribute;
+        if (!(drrm & DRRM_LB)) {
+            continue;
+        }
+
+        const char *ip_address;
+        SSET_FOR_EACH (ip_address, &lb_ips->ips_v4) {
+            struct in6_addr prefix;
+            ip46_parse(ip_address, &prefix);
+            /* XXX: Need to figure out tracked_port for LB without re-parsing
+             * ovn_datapath. lr_stateful_record doens't have as much data
+             * about LBs as it does about NATs. */
+            const struct ovn_port *tracked_port = NULL;
+            parsed_route_add(od, NULL, &prefix, 32, false,
+                             ip_address, op, 0, false, false,
+                             NULL, ROUTE_SOURCE_LB, &op->nbrp->header_,
+                             tracked_port, routes);
+        }
+        SSET_FOR_EACH (ip_address, &lb_ips->ips_v6) {
+            struct in6_addr prefix;
+            ip46_parse(ip_address, &prefix);
+            const struct ovn_port *tracked_port = NULL;
+            parsed_route_add(od, NULL, &prefix, 128, false,
+                             ip_address, op, 0, false, false,
+                             NULL, ROUTE_SOURCE_LB, &op->nbrp->header_,
+                             tracked_port, routes);
         }
     }
 

@@ -761,6 +761,7 @@ struct parsed_route {
     const struct ovsdb_idl_row *source_hint;
     char *lrp_addr_s;
     const struct ovn_port *out_port;
+    const struct ovn_port *tracked_port; /* May be NULL. */
 };
 
 /* Returns an independent clone of the provided parsed_route. The returned
@@ -789,6 +790,7 @@ void parsed_route_add(const struct ovn_datapath *od,
                       const struct sset *ecmp_selection_fields,
                       enum route_source source,
                       const struct ovsdb_idl_row *source_hint,
+                      const struct ovn_port *tracked_port,
                       struct hmap *routes);
 
 bool
@@ -823,7 +825,14 @@ void route_policies_destroy(struct route_policies_data *);
 void build_parsed_routes(const struct ovn_datapath *, const struct hmap *,
                          const struct hmap *, struct hmap *, struct simap *,
                          struct hmap *);
-void build_lb_nat_parsed_routes(const struct ovn_datapath *, const struct lr_nat_record *, struct hmap *);
+void build_nat_parsed_routes(const struct ovn_datapath *,
+                             const struct lr_nat_record *,
+                             const struct northd_data *,
+                             struct hmap *);
+void build_lb_parsed_routes(const struct ovn_datapath *,
+                            const struct ovn_lb_ip_set *,
+                            const struct northd_data *,
+                            struct hmap *);
 uint32_t get_route_table_id(struct simap *, const char *);
 void routes_init(struct routes_data *);
 void routes_destroy(struct routes_data *);
