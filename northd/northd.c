@@ -11325,6 +11325,7 @@ build_parsed_routes(const struct ovn_datapath *od, const struct hmap *lr_ports,
 static void
 build_nat_parsed_route_for_port(const struct ovn_port *advertising_op,
                                 const struct lr_nat_record *lr_nat,
+                                const struct hmap *ls_ports,
                                 struct hmap *routes)
 {
     const struct ovn_datapath *advertising_od = advertising_op->od;
@@ -11334,10 +11335,15 @@ build_nat_parsed_route_for_port(const struct ovn_port *advertising_op,
         int plen = nat_entry_is_v6(nat) ? 128 : 32;
         struct in6_addr prefix;
         ip46_parse(nat->nb->external_ip, &prefix);
+
+        const struct ovn_port *tracked_port =
+            nat->is_distributed
+            ? ovn_port_find(ls_ports, nat->nb->logical_port)
+            : nat->l3dgw_port;
         parsed_route_add(advertising_od, NULL, &prefix, plen, false,
                          nat->nb->external_ip, advertising_op, 0, false,
                          false, NULL, ROUTE_SOURCE_NAT, &nat->nb->header_,
-                         nat->l3dgw_port, routes);
+                         tracked_port, routes);
     }
 }
 
@@ -11346,6 +11352,7 @@ build_nat_parsed_route_for_port(const struct ovn_port *advertising_op,
 void
 build_nat_parsed_routes(const struct ovn_datapath *od,
                         const struct lr_nat_record *lr_nat,
+                        const struct hmap *ls_ports,
                         struct hmap *routes)
 {
     const struct ovn_port *op;
@@ -11354,7 +11361,7 @@ build_nat_parsed_routes(const struct ovn_datapath *od,
             continue;
         }
 
-        build_nat_parsed_route_for_port(op, lr_nat, routes);
+        build_nat_parsed_route_for_port(op, lr_nat, ls_ports, routes);
     }
 }
 
@@ -11367,6 +11374,7 @@ void
 build_nat_connected_parsed_routes(
     const struct ovn_datapath *od,
     const struct lr_stateful_table *lr_stateful_table,
+    const struct hmap *ls_ports,
     struct hmap *routes)
 {
     const struct ovn_port *op;
@@ -11398,7 +11406,7 @@ build_nat_connected_parsed_routes(
 
             /* Advertise peer's NAT routes via the local port too. */
             build_nat_parsed_route_for_port(op, peer_lr_stateful->lrnat_rec,
-                                            routes);
+                                            ls_ports, routes);
             return;
         }
 
@@ -11420,7 +11428,7 @@ build_nat_connected_parsed_routes(
 
             /* Advertise peer's NAT routes via the local port too. */
             build_nat_parsed_route_for_port(op, peer_lr_stateful->lrnat_rec,
-                                            routes);
+                                            ls_ports, routes);
         }
     }
 }

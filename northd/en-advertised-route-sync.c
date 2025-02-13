@@ -211,8 +211,10 @@ en_dynamic_routes_run(struct engine_node *node, void *data)
             continue;
         }
         build_nat_parsed_routes(od, lr_stateful_rec->lrnat_rec,
+                                &northd_data->ls_ports,
                                 &dynamic_routes_data->parsed_routes);
         build_nat_connected_parsed_routes(od, &lr_stateful_data->table,
+                                          &northd_data->ls_ports,
                                           &dynamic_routes_data->parsed_routes);
 
         build_lb_parsed_routes(od, lr_stateful_rec->lb_ips,
@@ -222,17 +224,6 @@ en_dynamic_routes_run(struct engine_node *node, void *data)
     }
     engine_set_node_state(node, EN_UPDATED);
 }
-
-bool
-dynamic_routes_lr_stateful_handler(struct engine_node *node OVS_UNUSED,
-                                   void *data OVS_UNUSED)
-{
-    /* XXX: Incremental processing of dynamic routes for stateful
-     * configuration changes is not yet supported.  Return false and
-     * trigger a recomputation.*/
-    return false;
-}
-
 
 struct ar_entry {
     struct hmap_node hmap_node;

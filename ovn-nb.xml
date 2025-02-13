@@ -3102,7 +3102,7 @@ or
         </p>
 
         <p>
-          If <code>nb</code> is in the list then northd will create entries in
+          If <code>lb</code> is in the list then northd will create entries in
           <ref table="Advertised_Route" db="OVN_Southbound"/> table for each
           Load Balancer VIP on this router and it's neighboring routers.
           Neighboring routers are those that are either directly connected,
@@ -3969,7 +3969,7 @@ or
         </p>
 
         <p>
-          If <code>nb</code> is in the list then northd will create entries in
+          If <code>lb</code> is in the list then northd will create entries in
           <ref table="Advertised_Route" db="OVN_Southbound"/> table for each
           Load Balancer VIP on this port's router, and it's neighboring
           routers. Neighboring routers are those that are either directly

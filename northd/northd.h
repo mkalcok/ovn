@@ -832,9 +832,11 @@ void build_parsed_routes(const struct ovn_datapath *, const struct hmap *,
                          struct hmap *);
 void build_nat_parsed_routes(const struct ovn_datapath *,
                              const struct lr_nat_record *,
-                             struct hmap *);
+                             const struct hmap *ls_ports,
+                             struct hmap *routes);
 void build_nat_connected_parsed_routes(const struct ovn_datapath *,
                                        const struct lr_stateful_table *,
+                                       const struct hmap *ls_ports,
                                        struct hmap *routes);
 void build_lb_parsed_routes(const struct ovn_datapath *,
                             const struct ovn_lb_ip_set *,
