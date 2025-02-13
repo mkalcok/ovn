@@ -444,8 +444,13 @@ advertised_route_table_sync_route_add(
          * advertises the route, we need to watch for changes on that DP as
          * well. */
         if (route->tracked_port && route->tracked_port->od != route->od) {
-            uuidset_insert(&data->nb_lr,
-                           &route->tracked_port->od->nbr->header_.uuid);
+            if (route->tracked_port->od->nbr) {
+                uuidset_insert(&data->nb_lr,
+                               &route->tracked_port->od->nbr->header_.uuid);
+            } else if (route->tracked_port->od->nbs) {
+                uuidset_insert(&data->nb_ls,
+                               &route->tracked_port->od->nbs->header_.uuid);
+            }
         }
     }
     if (route->source == ROUTE_SOURCE_LB) {
