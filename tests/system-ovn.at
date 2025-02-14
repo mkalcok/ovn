@@ -16977,7 +16977,12 @@ check ovn-nbctl --wait=sb \
     -- \
     lsp-set-options lsp-join-to-r2 router-port=r2-join \
     -- \
-    lrp-set-gateway-chassis r2-join hv1
+    ha-chassis-group-add g1 \
+    -- \
+    ha-chassis-group-add-chassis g1 hv1 10
+
+group_uuid=$(ovn-nbctl get ha_chassis_group g1 _uuid)
+check ovn-nbctl set logical_router_port r2-join ha_chassis_group="$group_uuid"
 
 # Create NAT on R2
 check ovn-nbctl lr-nat-add R2 dnat_and_snat 10.42.10.10 192.168.1.10
@@ -16996,13 +17001,64 @@ blackhole 172.16.1.11 proto 84 metric 1000])
 # Move DGW of R2 to another chassis to verify that route priority will decrease
 check ovn-nbctl --wait=hv \
   -- \
-  lrp-del-gateway-chassis r2-join hv1
+  ha-chassis-group-add-chassis g1 hv2 20 \
   -- \
-  lrp-set-gateway-chassis r2-join hv123
+  ha-chassis-group-remove-chassis g1 hv1
 
 OVS_WAIT_UNTIL_EQUAL([ip route list vrf ovnvrf$vrf | awk '{$1=$1};1'], [dnl
 blackhole 10.42.10.10 proto 84 metric 1000
 blackhole 10.42.10.11 proto 84 metric 1000
+blackhole 172.16.1.10 proto 84 metric 1000
+blackhole 172.16.1.11 proto 84 metric 1000])
+
+# Add "guest" LS connected the distributed router R2 and one "VM" called
+# guest1.
+# Also, connect R2 to ls-join via nother DGW
+check ovn-nbctl --wait=sb \
+    -- \
+    lrp-add R2 r2-guest 00:00:00:00:fd:02 192.168.2.1/24 \
+    -- \
+    lrp-add R2 r2-join-dgw2 00:00:00:00:fd:02 \
+    -- \
+    lsp-add ls-join lsp-join-to-r2-dgw2 \
+    -- \
+    lsp-set-type lsp-join-to-r2-dgw2 router \
+    -- \
+    lsp-set-options lsp-join-to-r2-dgw2 router-port=r2-join-dgw2 \
+    -- \
+    ls-add ls-guest \
+    -- \
+    lsp-add ls-guest lsp-guest-to-r2 \
+    -- \
+    lsp-set-type lsp-guest-to-r2 router \
+    -- \
+    lsp-set-options lsp-guest-to-r2 router-port=r2-guest \
+    -- \
+    lsp-set-addresses lsp-guest-to-r2 router \
+    -- \
+    lsp-add ls-guest guest1 \
+    -- \
+    lsp-set-addresses guest1 '00:00:00:00:fc:03 192.168.2.10'
+
+check ovn-nbctl set logical_router_port r2-join-dgw2 \
+      ha_chassis_group="$group_uuid"
+# Bind guest1 on hv1
+ADD_NAMESPACES(guest1)
+ADD_VETH(guest1, guest1, br-int, "192.168.2.10/24", "00:00:00:00:fd:03", \
+         "192.168.2.1")
+
+# Add distributed NAT on R2 for guest1 and ensure that it's advertised
+# with better metric on chassis hv1 even when DGP for R2 is elsewhere.
+check ovn-nbctl --gateway-port \
+    r2-join-dgw2 --add-route lr-nat-add R2 dnat_and_snat 10.42.20.11 \
+    192.168.2.10 guest1 00:00:00:00:fc:04
+check ovn-nbctl --wait=hv sync
+
+ovn-sbctl list advertised_route
+OVS_WAIT_UNTIL_EQUAL([ip route list vrf ovnvrf$vrf | awk '{$1=$1};1'], [dnl
+blackhole 10.42.10.10 proto 84 metric 1000
+blackhole 10.42.10.11 proto 84 metric 1000
+blackhole 10.42.20.11 proto 84 metric 100
 blackhole 172.16.1.10 proto 84 metric 1000
 blackhole 172.16.1.11 proto 84 metric 1000])
 
@@ -17136,7 +17192,12 @@ check ovn-nbctl --wait=sb \
     -- \
     lsp-set-options lsp-join-to-r2 router-port=r2-join \
     -- \
-    lrp-set-gateway-chassis r2-join hv1
+    ha-chassis-group-add g1 \
+    -- \
+    ha-chassis-group-add-chassis g1 hv1 10
+
+group_uuid=$(ovn-nbctl get ha_chassis_group g1 _uuid)
+check ovn-nbctl set logical_router_port r2-join ha_chassis_group="$group_uuid"
 
 # Create NAT on R2
 check ovn-nbctl lr-nat-add R2 \
@@ -17146,7 +17207,7 @@ check ovn-nbctl lr-nat-add R2 \
 
 check ovn-nbctl --wait=hv sync
 
-#AT_CHECK([ip link | grep -q ovnvrf$vrf:.*UP])
+AT_CHECK([ip link | grep -q ovnvrf$vrf:.*UP])
 
 OVS_WAIT_UNTIL_EQUAL([ip -6 route list vrf ovnvrf$vrf | awk '{$1=$1};1'], [dnl
 blackhole 2001:db8:1003::150 dev lo proto 84 metric 1000 pref medium
@@ -17157,15 +17218,64 @@ blackhole 2001:db8:1004::151 dev lo proto 84 metric 100 pref medium])
 # Move DGW of R2 to another chassis to verify that route priority will decrease
 check ovn-nbctl --wait=hv \
   -- \
-  lrp-del-gateway-chassis r2-join hv1
+  ha-chassis-group-add-chassis g1 hv2 20 \
   -- \
-  lrp-set-gateway-chassis r2-join hv123
+  ha-chassis-group-remove-chassis g1 hv1
 
 OVS_WAIT_UNTIL_EQUAL([ip -6 route list vrf ovnvrf$vrf | awk '{$1=$1};1'], [dnl
 blackhole 2001:db8:1003::150 dev lo proto 84 metric 1000 pref medium
 blackhole 2001:db8:1003::151 dev lo proto 84 metric 1000 pref medium
 blackhole 2001:db8:1004::150 dev lo proto 84 metric 1000 pref medium
 blackhole 2001:db8:1004::151 dev lo proto 84 metric 1000 pref medium])
+
+# Add "guest" LS connected the distributed router R2 and one "VM" called
+# guest1.
+# Also, connect R2 to ls-join via nother DGW
+check ovn-nbctl --wait=sb \
+    -- \
+    lrp-add R2 r2-guest 00:00:00:00:fd:02 2001:db9:2000::1/64 \
+    -- \
+    lrp-add R2 r2-join-dgw2 00:00:00:00:fd:02 \
+    -- \
+    lsp-add ls-join lsp-join-to-r2-dgw2 \
+    -- \
+    lsp-set-type lsp-join-to-r2-dgw2 router \
+    -- \
+    lsp-set-options lsp-join-to-r2-dgw2 router-port=r2-join-dgw2 \
+    -- \
+    ls-add ls-guest \
+    -- \
+    lsp-add ls-guest lsp-guest-to-r2 \
+    -- \
+    lsp-set-type lsp-guest-to-r2 router \
+    -- \
+    lsp-set-options lsp-guest-to-r2 router-port=r2-guest \
+    -- \
+    lsp-set-addresses lsp-guest-to-r2 router \
+    -- \
+    lsp-add ls-guest guest1 \
+    -- \
+    lsp-set-addresses guest1 '00:00:00:00:fc:03 2001:db9:2000::10'
+
+check ovn-nbctl set logical_router_port r2-join-dgw2 ha_chassis_group="$group_uuid"
+# Bind guest1 on hv1
+ADD_NAMESPACES(guest1)
+ADD_VETH(guest1, guest1, br-int, "2001:db9:2000::10/64", "00:00:00:00:fd:03", \
+         "2001:db9:2000::1", "nodad")
+
+# Add distributed NAT on R2 for guest1 and ensure that it's advertised
+# with better metric on chassis hv1 even when DGP for R2 is elsewhere.
+check ovn-nbctl --gateway-port \
+    r2-join-dgw2 --add-route lr-nat-add R2 dnat_and_snat \
+    2001:db8:1005::150 2001:db9:2000::10 guest1 00:00:00:00:fc:04
+check ovn-nbctl --wait=hv sync
+
+OVS_WAIT_UNTIL_EQUAL([ip -6 route list vrf ovnvrf$vrf | awk '{$1=$1};1'], [dnl
+blackhole 2001:db8:1003::150 dev lo proto 84 metric 1000 pref medium
+blackhole 2001:db8:1003::151 dev lo proto 84 metric 1000 pref medium
+blackhole 2001:db8:1004::150 dev lo proto 84 metric 1000 pref medium
+blackhole 2001:db8:1004::151 dev lo proto 84 metric 1000 pref medium
+blackhole 2001:db8:1005::150 dev lo proto 84 metric 100 pref medium])
 
 OVS_APP_EXIT_AND_WAIT([ovn-controller])
 # Ensure system resources are cleaned up

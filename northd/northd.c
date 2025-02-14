@@ -11337,7 +11337,7 @@ build_nat_parsed_route_for_port(const struct ovn_port *advertising_op,
         ip46_parse(nat->nb->external_ip, &prefix);
 
         const struct ovn_port *tracked_port =
-            nat->is_distributed
+            nat->is_distributed && nat->is_valid
             ? ovn_port_find(ls_ports, nat->nb->logical_port)
             : nat->l3dgw_port;
         parsed_route_add(advertising_od, NULL, &prefix, plen, false,
